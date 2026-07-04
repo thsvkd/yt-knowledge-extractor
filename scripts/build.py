@@ -7,14 +7,16 @@
 
 결과물:
     dist/yke-<cpu|gpu>-<platform>/     # 실행파일 + DLL + data/ 한 세트(폴더째 배포)
+    dist/yke-<cpu|gpu>-<platform>.zip  # 위 폴더 압축본(GitHub Releases 업로드용)
 
 CPU / GPU 차이:
-    STT(faster-whisper→ctranslate2)의 CUDA 가속에는 nvidia-cublas-cu12 / nvidia-cudnn-cu12
-    런타임이 필요하다. --gpu 를 주면 이 두 패키지를 번들에 포함하고, 안 주면 CPU 전용으로
-    더 가볍게 빌드한다. GPU 번들이라도 GPU 가 없으면 앱이 자동으로 CPU(int8)로 폴백한다.
+    STT(faster-whisper→ctranslate2)의 CUDA 가속에는 cuBLAS 런타임(nvidia-cublas-cu12)이
+    필요하다. --gpu 를 주면 이 패키지를 번들에 포함하고, 안 주면 CPU 전용으로 더 가볍게
+    빌드한다. GPU 번들이라도 GPU 가 없으면 앱이 자동으로 CPU(int8)로 폴백한다.
+    (cuDNN 은 ctranslate2 가 자체 번들하므로 nvidia-cudnn-cu12 는 넣지 않는다 — 실측 확인.)
 
     구현: flet build 는 [project.dependencies] 만 번들 requirements 로 쓰므로(optional
-    extra 무시), --gpu 일 때 빌드 동안만 pyproject 의 dependencies 에 두 패키지를 주입하고
+    extra 무시), --gpu 일 때 빌드 동안만 pyproject 의 dependencies 에 cuBLAS 를 주입하고
     끝나면 원본으로 복원한다.
 
 사전 준비:
@@ -38,8 +40,11 @@ _PRODUCT = "YouTube Knowledge Extractor"
 _ORG = "com.thsvkd"
 
 _PYPROJECT = REPO_ROOT / "pyproject.toml"
-# GPU 빌드에서 번들에 추가로 포함할 CUDA 런타임(= pyproject 의 [gpu] extra 와 동일).
-_GPU_DEPS = ("nvidia-cublas-cu12", "nvidia-cudnn-cu12")
+# GPU 빌드에서 번들에 추가할 CUDA 런타임. ctranslate2 4.8 은 cuDNN 로더(cudnn64_9.dll)를
+# 자체 번들하고 whisper 추론에 cuDNN 서브라이브러리를 쓰지 않으므로(RTX 2080 실측 확인:
+# nvidia-cudnn 제거 후에도 GPU 추론 성공), cuBLAS 만 필요하다. nvidia-cudnn-cu12(약 1.1GB)는
+# 넣지 않아 GPU 번들이 2.4GB→약 1.15GB 로 줄어든다.
+_GPU_DEPS = ("nvidia-cublas-cu12",)
 
 # Visual Studio C++ 빌드 도구 워크로드 식별자.
 _VC_TOOLS_COMPONENT = "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
@@ -119,6 +124,13 @@ def verify_artifact(dst: Path, target: str) -> None:
         info(f"완료: {dst}/ 를 확인하세요.")
 
 
+def compress_bundle(dst: Path) -> Path:
+    """배포 폴더를 zip 으로 압축한다(GitHub Releases 에 업로드할 단일 에셋)."""
+    info(f"압축 중… {dst.name}.zip (수 분 걸릴 수 있음)")
+    archive = shutil.make_archive(str(dst), "zip", root_dir=str(dst.parent), base_dir=dst.name)
+    return Path(archive)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -167,7 +179,9 @@ def main() -> int:
 
     dst = stash_output(target, variant)
     verify_artifact(dst, target)
+    archive = compress_bundle(dst)
     info(f"배포 폴더: {dst}  (폴더째 배포·실행하세요)")
+    info(f"배포 압축본: {archive}  ({archive.stat().st_size / 1024 / 1024:.0f} MB, GitHub Releases 업로드용)")
     return 0
 
 

@@ -17,11 +17,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# GPU(NVIDIA CUDA 12) STT 가속용. CTranslate2 가 요구하는 cuBLAS 12 + cuDNN 9 DLL 을
-# venv 에 넣는다. 설치: `uv sync --extra gpu`  (CPU 전용 환경에서는 불필요)
+# GPU(NVIDIA CUDA 12) STT 가속용. CTranslate2 4.8 은 cuDNN 로더(cudnn64_9.dll)를 자체
+# 번들하고 whisper 추론엔 cuBLAS 만 쓰므로(RTX 2080 실측 확인) cuBLAS 만 넣는다.
+# 설치: `uv sync --extra gpu`  (CPU 전용 환경에서는 불필요)
 gpu = [
     "nvidia-cublas-cu12",
-    "nvidia-cudnn-cu12",
 ]
 
 [project.scripts]
