@@ -75,11 +75,21 @@ uv run yke-gui
 - 파이프라인은 백그라운드 스레드에서 돌며 진행바·상태·로그가 실시간 갱신되고,
   **중단** 버튼으로 영상/단계 경계에서 협조적으로 멈춘다(받은 부분은 저장 폴더에 캐시).
 
-네이티브 실행파일 빌드(선택):
+## 빌드 / 배포
+
+실행한 OS 를 감지해 flet 네이티브 데스크톱 앱을 빌드한다(Windows/macOS/Linux 공통).
 
 ```bash
-uv run flet build windows   # 또는 macos / linux
+python scripts/build.py         # CPU 전용 버전
+python scripts/build.py --gpu   # NVIDIA CUDA 가속 버전
 ```
+
+- 결과물: `dist/yke-<cpu|gpu>-<platform>/` — 실행파일 + DLL + `data/` 한 세트. **폴더째** 배포·실행한다.
+- CPU / GPU: STT(faster-whisper)의 CUDA 가속에는 `nvidia-cublas-cu12`/`nvidia-cudnn-cu12` 런타임이
+  필요하다. `--gpu` 는 이 둘을 번들에 포함하고(빌드 동안만 `[project.dependencies]` 에 임시 주입),
+  없으면 CPU 전용으로 더 가볍게 빌드한다. GPU 번들도 GPU 가 없으면 자동으로 CPU(int8)로 폴백한다.
+- 사전 준비: Windows 는 Visual Studio "Desktop development with C++" 워크로드가 필요하다(없으면
+  스크립트가 설치 방법을 안내). Flutter SDK 는 `flet build` 가 필요 시 자동으로 내려받는다.
 
 ## 테스트
 
