@@ -37,6 +37,8 @@ _LEVEL_COLOR: dict[str, str] = {
 }
 # 로그 ListView 에 유지할 최대 줄 수(메모리 보호).
 _MAX_LOG_ROWS = 300
+# 로그 패널의 고정 높이(px). 루트가 스크롤되므로 창 높이에 의존하지 않고 이 안에서 자체 스크롤한다.
+_LOG_PANEL_HEIGHT = 260
 # 상태 텍스트 렌더 틱 주기(초). 짧은 시간에 몰리는 갱신을 한 번으로 합쳐 화면이 밀리지 않게 한다.
 _UI_TICK_SECONDS = 0.15
 
@@ -105,9 +107,11 @@ class PipelineGUI:
         page.theme_mode = ft.ThemeMode.SYSTEM
         page.padding = 20
         page.window.width = 820
-        page.window.height = 820
-        page.window.min_width = 620
-        page.window.min_height = 560
+        page.window.height = 860
+        # 창 높이는 하드코딩한 최소값에 의존하지 않는다. 루트 Column 을 스크롤 가능하게 두어
+        # 창이 콘텐츠보다 짧아지면 전체 페이지가 스크롤되므로, 요소가 세로로 압축("짜부")되지
+        # 않는다. 최소 너비만 버튼 줄바꿈으로 높이가 늘지 않게 넉넉히 둔다.
+        page.window.min_width = 640
         page.on_close = self._on_close
 
         cfg = self.base_cfg
@@ -246,17 +250,20 @@ class PipelineGUI:
                             ft.Text("진행 로그", size=12, color=_muted_color),
                             ft.Container(
                                 content=ft.SelectionArea(content=self.log_view),
-                                expand=True,
+                                # 고정 높이 패널. 내부 ListView 가 자체 스크롤(auto_scroll)하고,
+                                # 창이 짧아지면 루트 Column 이 페이지 전체를 스크롤한다.
+                                height=_LOG_PANEL_HEIGHT,
                                 border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
                                 border_radius=8,
                                 padding=8,
                             ),
                         ],
                         spacing=6,
-                        expand=True,
                     ),
                 ],
                 spacing=12,
+                # 창이 콘텐츠보다 짧으면 전체 페이지가 스크롤되어 요소가 압축되지 않는다.
+                scroll=ft.ScrollMode.AUTO,
                 expand=True,
             )
         )
