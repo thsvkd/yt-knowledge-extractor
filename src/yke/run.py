@@ -1,6 +1,6 @@
-"""CLI 진입점: 합의된 7단계 파이프라인 오케스트레이션.
+"""CLI 진입점 + 재사용 가능한 파이프라인 오케스트레이션.
 
-단계:
+합의된 7단계 파이프라인:
   0. 영상 선정        -> config/channel.yaml
   1. 오디오+메타      -> stage1_ingest
   2. 자막 확인        -> stage2_subtitles (수동 자막만)
@@ -9,7 +9,12 @@
   5. 원자 단위 추출   -> stage5_extract (LLM)
   6. 통합/문서화      -> stage6_integrate (LLM)
 
-중간 산출물은 data/ 아래에 캐싱되어 재실행 시 이어서 진행한다(--force 로 재생성).
+중간 산출물은 data/ 아래에 캐싱되어 재실행 시 이어서 진행한다(force 로 재생성).
+
+오케스트레이션은 :func:`run_pipeline` 하나로 모아 CLI(:func:`main`)와 GUI(gui.py)가
+같은 코어를 공유한다. 진행 상황은 :class:`Progress` 이벤트를 콜백으로 흘려 보내고,
+취소는 ``should_stop`` 콜러블로 영상/단계 경계에서 협조적으로 처리한다(진행 중인
+단일 영상의 STT·LLM 호출은 중간에 끊지 않고 다음 경계에서 멈춘다).
 """
 
 from __future__ import annotations
@@ -17,12 +22,13 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import load_config
+from .config import Config, load_config
 from .models import KnowledgeUnit, Segment
 from .paths import VideoPaths
-from .utils import load_dotenv
 from .pipeline import (
     stage1_ingest,
     stage2_subtitles,
@@ -31,7 +37,7 @@ from .pipeline import (
     stage5_extract,
     stage6_integrate,
 )
-
+from .utils import load_dotenv
 
 _YT_ID = re.compile(r"(?:v=|youtu\.be/|/shorts/|/embed/)([\w-]{11})")
 
@@ -41,8 +47,58 @@ def _video_id_from_url(url: str) -> str | None:
     return m.group(1) if m else None
 
 
-def build_transcript(url, cfg, data_dir: Path, force: bool):
-    """1~4단계: 영상 하나의 트랜스크립트를 생성/로딩한다."""
+# --- 진행 이벤트 / 결과 모델 -------------------------------------------------
+
+
+@dataclass
+class Progress:
+    """파이프라인 진행 상황 이벤트.
+
+    CLI 는 ``message`` 만 출력하고(단, ``transient`` 는 건너뜀), GUI 는 ``phase``·
+    ``done``/``total``·``indeterminate`` 로 진행바와 상태 텍스트를 갱신한다.
+    """
+
+    message: str
+    level: str = "info"  # info | success | warning | error
+    phase: str | None = None  # transcript | extract | integrate | done
+    done: int | None = None  # 현재 단계에서 완료한 개수
+    total: int | None = None  # 현재 단계의 전체 개수
+    indeterminate: bool = False  # 끊을 수 없는 단일 작업(다운로드/STT/LLM) 진행 중
+    transient: bool = False  # 스피너용 임시 상태 — 영속 로그(CLI 출력)에는 남기지 않음
+
+
+@dataclass
+class PipelineResult:
+    """실행 요약. GUI 가 완료 후 산출물 위치·집계를 보여줄 때 쓴다."""
+
+    video_count: int = 0
+    unit_count: int = 0
+    concept_count: int = 0
+    wiki_path: Path | None = None
+    clusters_path: Path | None = None
+    failures: list[str] = field(default_factory=list)
+    stopped: bool = False
+
+
+ProgressCB = Callable[[Progress], None]
+
+
+def _noop(_p: Progress) -> None:  # 기본 콜백(아무것도 안 함)
+    pass
+
+
+def build_transcript(
+    url: str,
+    cfg: Config,
+    data_dir: Path,
+    force: bool,
+    *,
+    log: Callable[[str], None] = print,
+):
+    """1~4단계: 영상 하나의 트랜스크립트를 생성/로딩한다.
+
+    ``log`` 로 진행 메시지를 흘려 CLI 는 stdout 에, GUI 는 로그 뷰에 보이게 한다.
+    """
     # 완전 캐시된 경우 URL 에서 id 를 뽑아 네트워크 조회 없이 로딩(오프라인 재실행 가능)
     cached_id = _video_id_from_url(url)
     if cached_id and not force:
@@ -67,7 +123,7 @@ def build_transcript(url, cfg, data_dir: Path, force: bool):
     if meta.get("manual_sub_lang"):
         sub = vp.root / f"audio.{meta['manual_sub_lang']}.vtt"
         if sub.exists():
-            print(f"[{vid}] ① 수동 자막 사용: {sub.name}")
+            log(f"[{vid}] ① 수동 자막 사용: {sub.name}")
             segs = stage2_subtitles.parse_vtt(sub)
 
     # ② faster-whisper STT
@@ -76,17 +132,17 @@ def build_transcript(url, cfg, data_dir: Path, force: bool):
         if audio is None:
             raise RuntimeError(f"[{vid}] 오디오 파일을 찾을 수 없습니다.")
         try:
-            print(f"[{vid}] ② STT 실행 (faster-whisper {cfg.stt.model})...")
+            log(f"[{vid}] ② STT 실행 (faster-whisper {cfg.stt.model})...")
             segs = stage3_stt.transcribe(audio, cfg.language, cfg.stt)
         except Exception as exc:
-            print(f"[{vid}] STT 실패: {type(exc).__name__}: {exc}")
+            log(f"[{vid}] STT 실패: {type(exc).__name__}: {exc}")
 
     # ③ 유튜브 자동자막 (STT 실패 시 최후 폴백)
     if segs is None and meta.get("auto_sub_lang"):
-        print(f"[{vid}] ③ 자동자막 폴백 다운로드 (lang={meta['auto_sub_lang']})...")
+        log(f"[{vid}] ③ 자동자막 폴백 다운로드 (lang={meta['auto_sub_lang']})...")
         sub = stage1_ingest.download_auto_subtitle(url, vp, meta["auto_sub_lang"])
         if sub:
-            print(f"[{vid}]    자동자막 사용: {sub.name}")
+            log(f"[{vid}]    자동자막 사용: {sub.name}")
             segs = stage2_subtitles.parse_vtt(sub, collapse_rollup=True)
 
     if segs is None:
@@ -98,6 +154,200 @@ def build_transcript(url, cfg, data_dir: Path, force: bool):
         encoding="utf-8",
     )
     return vid, meta, segs
+
+
+def run_pipeline(
+    videos: list[str],
+    cfg: Config,
+    *,
+    data_dir: str | Path | None = None,
+    out_dir: str | Path | None = None,
+    force: bool = False,
+    stage: str = "all",
+    on_progress: ProgressCB = _noop,
+    should_stop: Callable[[], bool] = lambda: False,
+) -> PipelineResult:
+    """전체 파이프라인을 실행하고 :class:`PipelineResult` 를 반환한다.
+
+    Args:
+        videos: 대상 유튜브 URL 목록.
+        cfg: 로딩된 설정(언어/STT/LLM 등).
+        data_dir/out_dir: 미지정 시 cfg 값을 사용.
+        stage: "transcript" | "extract" | "integrate" | "all". (integrate == all)
+        on_progress: 진행 이벤트 콜백.
+        should_stop: True 를 반환하면 다음 경계에서 협조적으로 중단한다.
+
+    Raises:
+        RuntimeError: 처리된 영상이 하나도 없거나(모든 영상 실패) LLM 자격증명이 없을 때.
+    """
+    data_dir = Path(data_dir if data_dir is not None else cfg.data_dir)
+    out_dir = Path(out_dir if out_dir is not None else cfg.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- 1~4단계: 트랜스크립트 ---
+    metas: dict[str, dict] = {}
+    transcripts: dict[str, list[Segment]] = {}
+    failures: list[str] = []
+    total = len(videos)
+    for i, url in enumerate(videos, start=1):
+        if should_stop():
+            return PipelineResult(
+                video_count=len(transcripts), failures=failures, stopped=True
+            )
+        on_progress(
+            Progress(
+                message=f"[{i}/{total}] 트랜스크립트 처리 중… {url}",
+                phase="transcript",
+                done=i - 1,
+                total=total,
+                indeterminate=True,
+                transient=True,
+            )
+        )
+        try:
+            vid, meta, segs = build_transcript(
+                url,
+                cfg,
+                data_dir,
+                force,
+                log=lambda m: on_progress(Progress(message=m, phase="transcript")),
+            )
+        except Exception as exc:  # 한 영상 실패가 배치 전체를 막지 않도록
+            on_progress(
+                Progress(
+                    message=f"[{url}] 실패 -> 건너뜀: {type(exc).__name__}: {exc}",
+                    level="error",
+                    phase="transcript",
+                )
+            )
+            failures.append(url)
+            continue
+        metas[vid] = meta
+        transcripts[vid] = segs
+        on_progress(
+            Progress(
+                message=f"[{vid}] 트랜스크립트 {len(segs)} 세그먼트",
+                level="success",
+                phase="transcript",
+                done=i,
+                total=total,
+            )
+        )
+
+    if failures:
+        on_progress(
+            Progress(
+                message=f"경고: {len(failures)}개 영상 실패, 나머지로 계속: {failures}",
+                level="warning",
+                phase="transcript",
+            )
+        )
+    if not transcripts:
+        raise RuntimeError("처리된 영상이 없습니다 (모든 영상 실패).")
+
+    if stage == "transcript":
+        on_progress(
+            Progress(message="트랜스크립트 단계까지 완료.", level="success", phase="done")
+        )
+        return PipelineResult(
+            video_count=len(transcripts), failures=failures
+        )
+
+    # LLM 은 5단계부터 필요 -> 여기서 지연 초기화 (자격증명 없으면 RuntimeError)
+    from .llm.claude_client import ClaudeClient
+
+    client = ClaudeClient()
+
+    # --- 5단계: 영상별 지식 원자 단위 ---
+    all_units: list[KnowledgeUnit] = []
+    total_v = len(transcripts)
+    for i, (vid, segs) in enumerate(transcripts.items(), start=1):
+        if should_stop():
+            return PipelineResult(
+                video_count=len(transcripts),
+                unit_count=len(all_units),
+                failures=failures,
+                stopped=True,
+            )
+        vp = VideoPaths(data_dir, vid)
+        if vp.units.exists() and not force:
+            units = [KnowledgeUnit(**u) for u in json.loads(vp.units.read_text(encoding="utf-8"))]
+        else:
+            on_progress(
+                Progress(
+                    message=f"[{vid}] 지식 원자 단위 추출...",
+                    phase="extract",
+                    done=i - 1,
+                    total=total_v,
+                    indeterminate=True,
+                )
+            )
+            units = stage5_extract.extract_units(segs, vid, cfg.llm, client)
+            vp.units.write_text(
+                json.dumps([u.model_dump() for u in units], ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        on_progress(
+            Progress(
+                message=f"[{vid}] {len(units)} 유닛",
+                level="success",
+                phase="extract",
+                done=i,
+                total=total_v,
+            )
+        )
+        all_units.extend(units)
+
+    if stage == "extract":
+        on_progress(Progress(message="추출 단계까지 완료.", level="success", phase="done"))
+        return PipelineResult(
+            video_count=len(transcripts),
+            unit_count=len(all_units),
+            failures=failures,
+        )
+
+    if should_stop():
+        return PipelineResult(
+            video_count=len(transcripts),
+            unit_count=len(all_units),
+            failures=failures,
+            stopped=True,
+        )
+
+    # --- 6단계: 통합 + 마크다운 ---
+    on_progress(
+        Progress(
+            message=f"통합 중... 총 {len(all_units)} 유닛",
+            phase="integrate",
+            indeterminate=True,
+        )
+    )
+    clusters = stage6_integrate.integrate(all_units, cfg.llm, client)
+    clusters_path = out_dir / "clusters.json"
+    clusters_path.write_text(
+        json.dumps([c.model_dump() for c in clusters], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    md = stage6_integrate.render_markdown(clusters, metas)
+    wiki_path = out_dir / "wiki.md"
+    wiki_path.write_text(md, encoding="utf-8")
+    on_progress(
+        Progress(
+            message=f"완료: {wiki_path} (개념 {len(clusters)}개)",
+            level="success",
+            phase="done",
+            done=1,
+            total=1,
+        )
+    )
+    return PipelineResult(
+        video_count=len(transcripts),
+        unit_count=len(all_units),
+        concept_count=len(clusters),
+        wiki_path=wiki_path,
+        clusters_path=clusters_path,
+        failures=failures,
+    )
 
 
 def main() -> None:
@@ -122,69 +372,19 @@ def main() -> None:
     cfg = load_config(args.config)
     if args.stt_model:
         cfg.stt.model = args.stt_model
-    data_dir = Path(cfg.data_dir)
-    out_dir = Path(cfg.output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- 1~4단계: 트랜스크립트 ---
-    metas: dict[str, dict] = {}
-    transcripts: dict[str, list[Segment]] = {}
-    failures: list[str] = []
-    for url in cfg.videos:
-        try:
-            vid, meta, segs = build_transcript(url, cfg, data_dir, args.force)
-        except Exception as exc:  # 한 영상 실패가 배치 전체를 막지 않도록
-            print(f"[{url}] 실패 -> 건너뜀: {type(exc).__name__}: {exc}")
-            failures.append(url)
-            continue
-        metas[vid] = meta
-        transcripts[vid] = segs
-        print(f"[{vid}] 트랜스크립트 {len(segs)} 세그먼트")
+    def on_progress(p: Progress) -> None:
+        # 스피너용 임시 상태는 CLI 출력에서 건너뛰어 기존 stdout 동작을 보존한다.
+        if not p.transient:
+            print(p.message)
 
-    if failures:
-        print(f"경고: {len(failures)}개 영상 실패, 나머지로 계속: {failures}")
-    if not transcripts:
-        raise RuntimeError("처리된 영상이 없습니다 (모든 영상 실패).")
-
-    if args.stage == "transcript":
-        print("트랜스크립트 단계까지 완료.")
-        return
-
-    # LLM 은 5단계부터 필요 -> 여기서 지연 초기화
-    from .llm.claude_client import ClaudeClient
-
-    client = ClaudeClient()
-
-    # --- 5단계: 영상별 지식 원자 단위 ---
-    all_units: list[KnowledgeUnit] = []
-    for vid, segs in transcripts.items():
-        vp = VideoPaths(data_dir, vid)
-        if vp.units.exists() and not args.force:
-            units = [KnowledgeUnit(**u) for u in json.loads(vp.units.read_text(encoding="utf-8"))]
-        else:
-            print(f"[{vid}] 지식 원자 단위 추출...")
-            units = stage5_extract.extract_units(segs, vid, cfg.llm, client)
-            vp.units.write_text(
-                json.dumps([u.model_dump() for u in units], ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-        print(f"[{vid}] {len(units)} 유닛")
-        all_units.extend(units)
-
-    if args.stage == "extract":
-        print("추출 단계까지 완료.")
-        return
-
-    # --- 6단계: 통합 + 마크다운 ---
-    print(f"통합 중... 총 {len(all_units)} 유닛")
-    clusters = stage6_integrate.integrate(all_units, cfg.llm, client)
-    (out_dir / "clusters.json").write_text(
-        json.dumps([c.model_dump() for c in clusters], ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    run_pipeline(
+        cfg.videos,
+        cfg,
+        force=args.force,
+        stage=args.stage,
+        on_progress=on_progress,
     )
-    md = stage6_integrate.render_markdown(clusters, metas)
-    (out_dir / "wiki.md").write_text(md, encoding="utf-8")
-    print(f"완료: {out_dir / 'wiki.md'} (개념 {len(clusters)}개)")
 
 
 if __name__ == "__main__":
