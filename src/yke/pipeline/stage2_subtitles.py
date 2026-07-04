@@ -39,7 +39,7 @@ def _collapse_rollup(segments: list[Segment], group_words: int = 12) -> list[Seg
     최대 구간을 찾아, 겹치지 않는 새 단어들만 이어 붙여 중복 없는 단어열을 만든 뒤
     ~group_words 단어 단위로 다시 세그먼트로 묶는다(타임스탬프 보존).
     """
-    words: list[tuple[float, str]] = []  # (start, word)
+    words: list[tuple[float, float, str]] = []  # (start, end, word)
     prev: list[str] = []
     for seg in segments:
         cur = seg.text.split()
@@ -50,7 +50,7 @@ def _collapse_rollup(segments: list[Segment], group_words: int = 12) -> list[Seg
             if prev[-k:] == cur[:k]:
                 overlap = k
                 break
-        words.extend((seg.start, w) for w in cur[overlap:])
+        words.extend((seg.start, seg.end, w) for w in cur[overlap:])
         prev = cur
 
     out: list[Segment] = []
@@ -59,8 +59,8 @@ def _collapse_rollup(segments: list[Segment], group_words: int = 12) -> list[Seg
         out.append(
             Segment(
                 start=chunk[0][0],
-                end=chunk[-1][0],
-                text=" ".join(w for _, w in chunk),
+                end=chunk[-1][1],  # 마지막 단어가 속한 큐의 end
+                text=" ".join(w for _, _, w in chunk),
             )
         )
     return out

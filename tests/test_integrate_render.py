@@ -43,6 +43,25 @@ class TestRenderMarkdown(unittest.TestCase):
         self.assertIn("⚠️", md)
         self.assertIn("상충 지점 X", md)
 
+    def test_none_title_does_not_crash(self):
+        # 회귀: meta 의 title 이 None 이어도 TypeError 없이 video_id 로 폴백해야 한다.
+        clusters = [
+            ConceptCluster(
+                concept="c",
+                summary="s",
+                points=[
+                    ConceptPoint(
+                        statement="p",
+                        type="fact",
+                        sources=[SourceRef(video_id="vid12345678", timestamp="00:10")],
+                    )
+                ],
+            )
+        ]
+        md = render_markdown(clusters, {"vid12345678": {"title": None}})
+        self.assertIn("vid12345678", md)
+        self.assertIn("?t=10", md)
+
 
 if __name__ == "__main__":
     unittest.main()

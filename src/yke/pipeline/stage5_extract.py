@@ -42,21 +42,46 @@ def _chunk(segments: list[Segment], max_chars: int) -> list[str]:
     return chunks
 
 
+# LLM 이 한국어/대문자 등으로 type 을 낼 수 있어 표준값으로 정규화한다.
+_TYPE_MAP = {
+    "fact": "fact", "opinion": "opinion", "tip": "tip", "definition": "definition",
+    "사실": "fact", "의견": "opinion", "팁": "tip", "정의": "definition",
+}
+
+
+def _to_unit(obj: dict, video_id: str) -> KnowledgeUnit:
+    raw = str(obj.get("type", "")).strip()
+    obj["type"] = _TYPE_MAP.get(raw.lower(), _TYPE_MAP.get(raw, "fact"))
+    obj.setdefault("timestamp", "00:00")
+    obj.setdefault("quote_evidence", "")
+    obj["source_video_id"] = video_id
+    return KnowledgeUnit(**obj)
+
+
 def extract_units(segments, video_id: str, llm_cfg, client) -> list[KnowledgeUnit]:
     units: list[KnowledgeUnit] = []
+    skipped = 0
     chunks = _chunk(segments, llm_cfg.max_chars_per_chunk)
     for idx, chunk in enumerate(chunks, 1):
         user = (
             f"다음은 영상 트랜스크립트의 일부입니다. 지식 원자 단위를 JSON 배열로 추출하세요.\n\n{chunk}"
         )
-        text = client.complete(_SYSTEM, user, model=llm_cfg.model, max_tokens=8000)
-        for obj in parse_json_array(text):
+        try:
+            text = client.complete(_SYSTEM, user, model=llm_cfg.model, max_tokens=8000)
+        except Exception as exc:  # 한 청크 실패가 전체 추출을 무너뜨리지 않도록
+            print(f"    청크 {idx}/{len(chunks)} LLM 실패 -> 건너뜀: {type(exc).__name__}: {exc}")
+            continue
+        parsed = parse_json_array(text)
+        if not parsed and text.strip():
+            print(f"    청크 {idx}/{len(chunks)} 경고: JSON 파싱 실패(잘림/형식 오류 가능)")
+        for obj in parsed:
             if not isinstance(obj, dict):
                 continue
-            obj["source_video_id"] = video_id
             try:
-                units.append(KnowledgeUnit(**obj))
+                units.append(_to_unit(obj, video_id))
             except Exception:
-                continue  # 스키마 불일치 항목은 건너뜀
+                skipped += 1  # 스키마 검증 실패
         print(f"    청크 {idx}/{len(chunks)} 완료 (누적 {len(units)} 유닛)")
+    if skipped:
+        print(f"    (스키마 검증 실패로 건너뛴 항목: {skipped})")
     return units

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 from .config import load_config
@@ -32,8 +33,25 @@ from .pipeline import (
 )
 
 
+_YT_ID = re.compile(r"(?:v=|youtu\.be/|/shorts/|/embed/)([\w-]{11})")
+
+
+def _video_id_from_url(url: str) -> str | None:
+    m = _YT_ID.search(url)
+    return m.group(1) if m else None
+
+
 def build_transcript(url, cfg, data_dir: Path, force: bool):
     """1~4단계: 영상 하나의 트랜스크립트를 생성/로딩한다."""
+    # 완전 캐시된 경우 URL 에서 id 를 뽑아 네트워크 조회 없이 로딩(오프라인 재실행 가능)
+    cached_id = _video_id_from_url(url)
+    if cached_id and not force:
+        vp = VideoPaths(data_dir, cached_id)
+        if vp.transcript.exists() and vp.meta.exists():
+            meta = json.loads(vp.meta.read_text(encoding="utf-8"))
+            segs = [Segment(**s) for s in json.loads(vp.transcript.read_text(encoding="utf-8"))]
+            return cached_id, meta, segs
+
     info = stage1_ingest.probe(url)
     vid = info["id"]
     vp = VideoPaths(data_dir, vid)
@@ -45,10 +63,10 @@ def build_transcript(url, cfg, data_dir: Path, force: bool):
 
     segs: list[Segment] | None = None
 
-    # ① 수동 자막 (최우선)
+    # ① 수동 자막 (최우선) — 기록된 언어의 파일을 정확히 지목
     if meta.get("manual_sub_lang"):
-        sub = stage2_subtitles.find_subtitle_file(vp)
-        if sub:
+        sub = vp.root / f"audio.{meta['manual_sub_lang']}.vtt"
+        if sub.exists():
             print(f"[{vid}] ① 수동 자막 사용: {sub.name}")
             segs = stage2_subtitles.parse_vtt(sub)
 
@@ -111,11 +129,22 @@ def main() -> None:
     # --- 1~4단계: 트랜스크립트 ---
     metas: dict[str, dict] = {}
     transcripts: dict[str, list[Segment]] = {}
+    failures: list[str] = []
     for url in cfg.videos:
-        vid, meta, segs = build_transcript(url, cfg, data_dir, args.force)
+        try:
+            vid, meta, segs = build_transcript(url, cfg, data_dir, args.force)
+        except Exception as exc:  # 한 영상 실패가 배치 전체를 막지 않도록
+            print(f"[{url}] 실패 -> 건너뜀: {type(exc).__name__}: {exc}")
+            failures.append(url)
+            continue
         metas[vid] = meta
         transcripts[vid] = segs
         print(f"[{vid}] 트랜스크립트 {len(segs)} 세그먼트")
+
+    if failures:
+        print(f"경고: {len(failures)}개 영상 실패, 나머지로 계속: {failures}")
+    if not transcripts:
+        raise RuntimeError("처리된 영상이 없습니다 (모든 영상 실패).")
 
     if args.stage == "transcript":
         print("트랜스크립트 단계까지 완료.")

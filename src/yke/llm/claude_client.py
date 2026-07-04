@@ -26,8 +26,11 @@ def _build_client() -> tuple[anthropic.Anthropic, bool]:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
 
     if oauth:
+        # api_key=None: 환경에 ANTHROPIC_API_KEY 도 있어도 x-api-key 를 함께 보내지 않도록
+        # 명시(anthropic 0.116 에선 auth_token 사용 시 Authorization 헤더만 나가는 것을 확인).
         client = anthropic.Anthropic(
             auth_token=oauth,
+            api_key=None,
             default_headers={"anthropic-beta": _OAUTH_BETA_HEADER},
         )
         return client, True
@@ -71,7 +74,18 @@ class ClaudeClient:
             with self.client.messages.stream(**kwargs) as s:
                 for chunk in s.text_stream:
                     parts.append(chunk)
+                final = s.get_final_message()
+            self._warn_if_truncated(final, max_tokens)
             return "".join(parts)
 
         msg = self.client.messages.create(**kwargs)
+        self._warn_if_truncated(msg, max_tokens)
         return "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
+
+    @staticmethod
+    def _warn_if_truncated(msg, max_tokens: int) -> None:
+        if getattr(msg, "stop_reason", None) == "max_tokens":
+            print(
+                f"  경고: 응답이 max_tokens({max_tokens})에서 잘렸습니다 — "
+                "결과가 불완전할 수 있습니다(청크 축소/재시도 고려)."
+            )

@@ -110,5 +110,8 @@ def download_auto_subtitle(url: str, vpaths: VideoPaths, lang: str) -> "object |
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.extract_info(url, download=True)
+    exact = Path(vpaths.root) / f"audio.{lang}.vtt"
+    if exact.exists():
+        return exact
     hits = sorted(Path(vpaths.root).glob("audio.*.vtt"))
     return hits[0] if hits else None

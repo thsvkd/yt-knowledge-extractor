@@ -26,8 +26,10 @@ class VideoPaths:
         return self.root / "units.json"
 
     def audio(self) -> Path | None:
-        """다운로드된 오디오 파일 (확장자는 원본 컨테이너에 따라 다름)."""
+        """다운로드된 오디오 파일. 알려진 오디오 컨테이너만 채택하고
+        .part/.ytdl 같은 미완성 다운로드나 부수 파일은 제외한다."""
+        audio_exts = {".m4a", ".webm", ".mp3", ".opus", ".mp4", ".wav", ".ogg", ".aac"}
         for p in sorted(self.root.glob("audio.*")):
-            if p.suffix.lower() not in {".json", ".vtt", ".srt"}:
+            if p.suffix.lower() in audio_exts:
                 return p
         return None

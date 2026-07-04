@@ -44,7 +44,8 @@ def _register_cuda_dll_dirs() -> list[str]:
                 if bindir not in os.environ.get("PATH", ""):
                     os.environ["PATH"] = bindir + os.pathsep + os.environ.get("PATH", "")
                 added.append(bindir)
-    _cuda_dlls_registered = True
+    if added:
+        _cuda_dlls_registered = True
     return added
 
 
