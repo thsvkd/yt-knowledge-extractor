@@ -143,10 +143,13 @@ def main() -> int:
     info("의존성 동기화 (uv sync)")
     check(["uv", "sync"])
 
-    original_pyproject = _PYPROJECT.read_text(encoding="utf-8")
+    # 원본을 바이트로 보존한다. write_text 는 Windows 에서 \n→\r\n 으로 바꿔 원복 시
+    # 줄바꿈만 달라지고 git 이 변경으로 오인한다. 바이트 라운드트립으로 정확히 되돌린다.
+    original_bytes = _PYPROJECT.read_bytes()
     if args.gpu:
         info("GPU 빌드: pyproject 에 CUDA 런타임을 임시 주입")
-        _PYPROJECT.write_text(_inject_gpu_deps(original_pyproject), encoding="utf-8")
+        injected = _inject_gpu_deps(original_bytes.decode("utf-8"))
+        _PYPROJECT.write_bytes(injected.encode("utf-8"))
 
     try:
         info(f"flet build {target} ({variant})")
@@ -159,7 +162,7 @@ def main() -> int:
         )
     finally:
         if args.gpu:
-            _PYPROJECT.write_text(original_pyproject, encoding="utf-8")
+            _PYPROJECT.write_bytes(original_bytes)
             info("pyproject 원복 완료")
 
     dst = stash_output(target, variant)
