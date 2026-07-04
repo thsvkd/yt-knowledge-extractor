@@ -1,0 +1,31 @@
+[project]
+name = "yt-knowledge-extractor"
+version = "0.1.0"
+description = "유튜버 한 명의 말 중심 콘텐츠를 개념 단위 지식베이스로 가공하는 PoC"
+requires-python = ">=3.11"
+dependencies = [
+    "yt-dlp>=2025.1.1",
+    "faster-whisper>=1.1.0",
+    "anthropic>=0.40",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "imageio-ffmpeg>=0.5.1",
+]
+
+[project.optional-dependencies]
+# GPU(NVIDIA CUDA 12) STT 가속용. CTranslate2 가 요구하는 cuBLAS 12 + cuDNN 9 DLL 을
+# venv 에 넣는다. 설치: `uv sync --extra gpu`  (CPU 전용 환경에서는 불필요)
+gpu = [
+    "nvidia-cublas-cu12",
+    "nvidia-cudnn-cu12",
+]
+
+[project.scripts]
+yke = "yke.run:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/yke"]

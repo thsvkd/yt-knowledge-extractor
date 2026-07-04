@@ -1,0 +1,27 @@
+# 대상 영상 목록 (PoC: 5~10개, 주제 밀도 높은 것 우선)
+videos:
+  - https://www.youtube.com/watch?v=8fYXYk42LxU
+
+# 콘텐츠 언어 (Whisper / 자막 언어 힌트)
+language: ko
+
+# 3단계 STT (로컬 faster-whisper 베이스라인)
+stt:
+  model: large-v3        # tiny | base | small | medium | large-v3
+  device: auto           # auto | cuda | cpu
+  compute_type: int8     # int8 | int8_float16 | float16 (GPU면 float16 권장)
+  word_timestamps: true
+
+# 자막/STT 우선순위: ① 수동 자막 > ② faster-whisper STT > ③ 유튜브 자동자막
+subtitles:
+  use_manual: true         # ① 수동(크리에이터 제작) 자막이 있으면 최우선 사용
+  use_auto_fallback: true  # ③ STT 가 실패할 때만 유튜브 자동자막으로 폴백
+                           #    (구두점X·오탈자 있음. false 면 STT 실패 시 그대로 에러)
+
+# 5·6단계 LLM
+llm:
+  model: claude-opus-4-8
+  max_chars_per_chunk: 8000   # 추출 단계 트랜스크립트 청크 크기
+
+output_dir: output
+data_dir: data
