@@ -22,7 +22,7 @@ from pathlib import Path
 
 import flet as ft
 
-from . import token_store
+from . import __version__, token_store, updater
 from .config import Config, LLMConfig, STTConfig, load_config
 from .run import Progress, PipelineResult, run_pipeline
 from .utils import load_dotenv
@@ -97,6 +97,7 @@ class PipelineGUI:
         self._last_result: PipelineResult | None = None
         self._last_out_dir: Path | None = None
         self._saved_location = ""  # 저장된 토큰의 위치 라벨(앱 저장소 / 파일: ...)
+        self._pending_release: updater.Release | None = None  # 다운로드 대기 중인 업데이트
         # 상태 텍스트는 백그라운드 스레드가 값만 기록하고, 렌더 틱이 일괄 반영한다.
         self._status_lock = threading.Lock()
         self._status_dirty = threading.Event()
@@ -112,6 +113,8 @@ class PipelineGUI:
             target=self._ui_ticker, name="gui-render-tick", daemon=True
         )
         self._render_thread.start()
+        # 시작 시 새 버전을 조용히 확인한다(네트워크/레포 미공개 실패는 무시).
+        self.page.run_thread(self._auto_check_updates)
 
     # -- UI 구성 ---------------------------------------------------------
     def _build(self) -> None:
@@ -235,6 +238,12 @@ class PipelineGUI:
         )
         self.cred_status = ft.Text(size=12, color=_muted_color)
 
+        # 자체 업데이트: 확인 버튼 + 상태. 새 버전이 있으면 같은 버튼이 '업데이트 후 재시작'으로 바뀐다.
+        self.update_btn = ft.Button(
+            "업데이트 확인", icon=ft.Icons.REFRESH, on_click=lambda _e: self._on_update_click()
+        )
+        self.update_status = ft.Text(f"현재 버전 v{__version__}", size=12, color=_muted_color)
+
         advanced = ft.ExpansionTile(
             title=ft.Text("고급 옵션"),
             controls=[
@@ -255,6 +264,13 @@ class PipelineGUI:
                             ),
                             ft.Row([self.token_save_btn, self.token_clear_btn], spacing=8),
                             self.cred_status,
+                            ft.Divider(),
+                            ft.Row(
+                                [self.update_btn, self.update_status],
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                spacing=12,
+                                wrap=True,
+                            ),
                         ],
                         spacing=12,
                     ),
@@ -466,6 +482,79 @@ class PipelineGUI:
         self.cred_status.value = message
         self.cred_status.color = color
         self._safe_update(self.cred_status)
+
+    # -- 자체 업데이트(GitHub Releases) ----------------------------------
+    def _auto_check_updates(self) -> None:
+        self._check_updates(manual=False)
+
+    def _on_update_click(self) -> None:
+        if self._pending_release is None:
+            self._set_update_status("업데이트 확인 중…", None)
+            self.page.run_thread(lambda: self._check_updates(manual=True))
+        else:
+            self.page.run_thread(self._download_and_apply)
+
+    def _check_updates(self, manual: bool) -> None:
+        variant, target = updater.detect_variant_target()
+        try:
+            release = updater.check_latest(__version__, variant, target)
+        except Exception as exc:
+            logger.warning("업데이트 확인 실패", exc_info=True)
+            if manual:
+                self._set_update_status(f"업데이트 확인 실패: {exc}", ft.Colors.AMBER)
+            return
+        if release is not None:
+            self._pending_release = release
+            # flet 0.85 Button 의 라벨은 content 다(text 로 쓰면 무시되어 라벨이 안 바뀐다).
+            self.update_btn.content = f"v{release.version} 로 업데이트 후 재시작"
+            self.update_btn.icon = ft.Icons.SYSTEM_UPDATE
+            self._safe_update(self.update_btn)
+            self._set_update_status(
+                f"새 버전 v{release.version} 사용 가능 (현재 v{__version__})", ft.Colors.GREEN
+            )
+        elif manual:
+            self._set_update_status(f"최신 버전입니다 (v{__version__}).", self._muted_color)
+
+    def _download_and_apply(self) -> None:
+        release = self._pending_release
+        if release is None:
+            return
+        root = updater.install_root()
+        if not updater.is_bundle(root):
+            self._set_update_status(
+                "개발 환경에서는 업데이트를 적용하지 않습니다(배포 번들에서만 동작).",
+                ft.Colors.AMBER,
+            )
+            return
+        import tempfile
+
+        staging = Path(tempfile.gettempdir()) / "yke_update"
+        try:
+            self._set_update_status(f"v{release.version} 다운로드 중… 0%", None)
+            zip_path = updater.download(
+                release, staging / "download", progress_cb=self._download_progress
+            )
+            self._set_update_status("압축 해제 중…", None)
+            new_dir = updater.extract(zip_path, staging / "extracted")
+        except Exception as exc:
+            logger.error("업데이트 다운로드 실패", exc_info=True)
+            self._set_update_status(f"업데이트 실패: {exc}", ft.Colors.RED)
+            return
+        app_exe = (
+            "yt-knowledge-extractor.exe" if sys.platform == "win32" else "yt-knowledge-extractor"
+        )
+        self._set_update_status("업데이트를 적용하고 재시작합니다…", ft.Colors.GREEN)
+        # 이 호출은 사이드카를 띄우고 현재 프로세스를 종료한다(앱이 닫히고 새 버전이 재실행).
+        updater.apply_and_restart(new_dir, app_exe=app_exe, install_dir=root)
+
+    def _download_progress(self, frac: float) -> None:
+        version = self._pending_release.version if self._pending_release else ""
+        self._set_update_status(f"v{version} 다운로드 중… {int(frac * 100)}%", None)
+
+    def _set_update_status(self, message: str, color: str | None) -> None:
+        self.update_status.value = message
+        self.update_status.color = color
+        self._safe_update(self.update_status)
 
     # -- 실행 검증 & 시작 ------------------------------------------------
     def _urls(self) -> list[str]:
