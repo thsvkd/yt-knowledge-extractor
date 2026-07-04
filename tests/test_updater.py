@@ -30,6 +30,16 @@ class TestVersion(unittest.TestCase):
         self.assertEqual(updater.asset_name("cpu", "windows"), "yke-cpu-windows.zip")
         self.assertEqual(updater.asset_name("gpu", "linux"), "yke-gpu-linux.zip")
 
+    def test_double_digit_minor_compares_numerically(self):
+        self.assertTrue(updater.is_newer("1.10.0", "1.9.0"))
+        self.assertFalse(updater.is_newer("1.9.0", "1.10.0"))
+
+    def test_prerelease_is_not_greater_than_final(self):
+        # '1.2.3-rc1' 이 최종 '1.2.3' 보다 크게 정렬되면 안 된다.
+        self.assertEqual(updater.parse_version("v1.2.3-rc1"), (1, 2, 3))
+        self.assertEqual(updater.parse_version("1.2.3+build5"), (1, 2, 3))
+        self.assertFalse(updater.is_newer("1.2.3-rc1", "1.2.3"))
+
 
 class TestDetectVariantTarget(unittest.TestCase):
     def test_parses_folder_name(self):
@@ -118,6 +128,24 @@ class TestSidecar(unittest.TestCase):
             self.assertIn("yke-cpu-windows_backup", text)
             expected_suffix = ".bat" if sys.platform == "win32" else ".sh"
             self.assertTrue(path.name.endswith(expected_suffix))
+
+    def test_win_sidecar_hardening(self):
+        if sys.platform != "win32":
+            self.skipTest("Windows 전용 사이드카")
+        with tempfile.TemporaryDirectory() as d:
+            path = updater.write_sidecar(
+                d,
+                pid=1,
+                install_dir=Path(d) / "yke-cpu-windows",
+                new_bundle_dir=Path(d) / "staging" / "yke-cpu-windows",
+                app_exe="yt-knowledge-extractor.exe",
+            )
+            text = path.read_text(encoding="utf-8")
+            # 콘솔 없이도 슬립되는 ping 사용(timeout 은 busy-loop 위험).
+            self.assertIn("ping", text)
+            self.assertNotIn("timeout /t", text)
+            # 롤백 전 부분 install 을 지운다.
+            self.assertIn("rmdir", text)
 
 
 if __name__ == "__main__":

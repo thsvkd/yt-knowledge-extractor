@@ -528,17 +528,20 @@ class PipelineGUI:
             return
         import tempfile
 
-        staging = Path(tempfile.gettempdir()) / "yke_update"
+        dl_dir = Path(tempfile.gettempdir()) / "yke_update"
+        # 추출본은 설치 볼륨(install_dir.parent)에 둔다. 그래야 사이드카의 폴더 스왑이 원자적
+        # rename 이 된다(temp 가 다른 드라이브면 비원자적 copy 라 실패 시 install 이 깨진다).
+        extract_dir = root.parent / ".yke_update_staging"
         try:
             self._set_update_status(f"v{release.version} 다운로드 중… 0%", None)
-            zip_path = updater.download(
-                release, staging / "download", progress_cb=self._download_progress
-            )
+            zip_path = updater.download(release, dl_dir, progress_cb=self._download_progress)
             self._set_update_status("압축 해제 중…", None)
-            new_dir = updater.extract(zip_path, staging / "extracted")
+            new_dir = updater.extract(zip_path, extract_dir)
+            zip_path.unlink(missing_ok=True)  # 다운로드 zip 은 이제 불필요
         except Exception as exc:
             logger.error("업데이트 다운로드 실패", exc_info=True)
             self._set_update_status(f"업데이트 실패: {exc}", ft.Colors.RED)
+            self._pending_release = None
             return
         app_exe = (
             "yt-knowledge-extractor.exe" if sys.platform == "win32" else "yt-knowledge-extractor"
