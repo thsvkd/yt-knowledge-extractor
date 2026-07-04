@@ -1,0 +1,2 @@
+# 저장소 내부는 LF 로 정규화 (CRLF 체크아웃 churn 방지)
+* text=auto eol=lf
