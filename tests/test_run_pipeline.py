@@ -93,6 +93,40 @@ class TestRunPipeline(unittest.TestCase):
         self.assertTrue(res.stopped)
         self.assertEqual(res.video_count, 1)
 
+    def test_channel_expands_and_dedups(self) -> None:
+        def fake_expand(url, limit, *, log=print):
+            return ["https://youtu.be/a", "https://youtu.be/b"]
+
+        with (
+            mock.patch.object(run.stage1_ingest, "expand_source", side_effect=fake_expand),
+            mock.patch.object(run, "build_transcript", side_effect=_fake_bt),
+        ):
+            # 채널은 a,b 로 확장 + 개별 a → 중복 제거 → a,b (2개)
+            res = run.run_pipeline(
+                ["https://www.youtube.com/@chan", "https://youtu.be/a"],
+                self.cfg,
+                stage="transcript",
+                channel_limit=2,
+            )
+        self.assertEqual(res.video_count, 2)
+        self.assertFalse(res.stopped)
+
+    def test_channel_expansion_failure_isolated(self) -> None:
+        def fake_expand(url, limit, *, log=print):
+            raise RuntimeError("채널 없음")
+
+        with (
+            mock.patch.object(run.stage1_ingest, "expand_source", side_effect=fake_expand),
+            mock.patch.object(run, "build_transcript", side_effect=_fake_bt),
+        ):
+            res = run.run_pipeline(
+                ["https://www.youtube.com/@bad", "https://youtu.be/ok"],
+                self.cfg,
+                stage="transcript",
+            )
+        self.assertIn("https://www.youtube.com/@bad", res.failures)
+        self.assertEqual(res.video_count, 1)
+
     def test_extract_stage_uses_llm_units(self) -> None:
         units = [
             KnowledgeUnit(

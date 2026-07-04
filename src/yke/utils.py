@@ -24,6 +24,24 @@ def load_dotenv(path: str | Path = ".env") -> None:
             os.environ.setdefault(key, val)
 
 
+def is_channel_or_playlist_url(url: str) -> bool:
+    """개별 영상이 아니라 채널/재생목록 URL 인지 판별한다(확장 대상).
+
+    개별 영상(watch?v=, youtu.be/<id>, /shorts/, /embed/)은 그대로 두고, 채널
+    (/@handle, /channel/, /c/, /user/)이나 재생목록(list=, /playlist)은 최근 N개
+    영상으로 확장한다. ``watch?v=...&list=...``처럼 영상+목록이 섞이면 개별 영상으로
+    본다(watch 우선).
+    """
+    u = url.strip().lower()
+    if not u:
+        return False
+    if any(s in u for s in ("watch?v=", "youtu.be/", "/shorts/", "/embed/")):
+        return False
+    if "list=" in u or "/playlist" in u:
+        return True
+    return any(s in u for s in ("/@", "/channel/", "/c/", "/user/"))
+
+
 def fmt_ts(seconds: float | None) -> str:
     """초 -> "MM:SS" (또는 1시간 넘으면 "H:MM:SS")."""
     total = int(seconds or 0)

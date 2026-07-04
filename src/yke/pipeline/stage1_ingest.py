@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import urlsplit, urlunsplit
 
 import yt_dlp
 
@@ -29,6 +30,66 @@ def probe(url: str) -> dict:
     """다운로드 없이 메타데이터/자막 가용성 정보를 조회한다."""
     with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True, "no_warnings": True}) as ydl:
         return ydl.extract_info(url, download=False)
+
+
+def _normalize_channel_url(url: str) -> str:
+    """채널 루트 URL 이면 최근 영상이 나오는 ``/videos`` 탭으로 정규화한다.
+
+    ``/@handle``·``/channel/UC..``·``/c/name``·``/user/name`` 뒤에 이미 탭
+    (``/videos``·``/streams``·``/shorts`` 등)이나 재생목록이 붙어 있으면 그대로 둔다.
+    """
+    u = url.strip()
+    low = u.lower()
+    if "list=" in low or "/playlist" in low:
+        return u  # 재생목록은 그대로
+    if not any(s in low for s in ("/@", "/channel/", "/c/", "/user/")):
+        return u
+    # 쿼리스트링/프래그먼트(?si=..., ?sub_confirmation=1 등)가 있어도 경로에만 /videos 를
+    # 붙이도록 URL 을 분해해 처리한다(쿼리 뒤에 붙으면 URL 이 깨진다).
+    parts = urlsplit(u)
+    path = parts.path.rstrip("/")
+    tail = path.rsplit("/", 1)[-1].lower()
+    if tail in ("videos", "streams", "shorts", "featured", "live"):
+        return u
+    return urlunsplit((parts.scheme, parts.netloc, path + "/videos", parts.query, parts.fragment))
+
+
+def expand_source(url: str, limit: int | None, *, log=print) -> list[str]:
+    """채널/재생목록 URL 을 개별 영상 watch URL 목록으로 확장한다(최근순, 최대 limit 개).
+
+    개별 영상 URL 은 그대로 ``[url]`` 로 돌려준다. ``extract_flat`` 로 메타 조회 없이
+    빠르게 항목만 나열하고, ``playlistend`` 로 최근 N개만 가져온다.
+    """
+    from ..utils import is_channel_or_playlist_url
+
+    if not is_channel_or_playlist_url(url):
+        return [url]
+
+    target = _normalize_channel_url(url)
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "extract_flat": "in_playlist",
+    }
+    if limit and limit > 0:
+        opts["playlistend"] = limit
+    log(f"채널/재생목록 분석 중… {target}")
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(target, download=False)
+    entries = info.get("entries") or []
+    if limit and limit > 0:
+        entries = entries[:limit]
+    urls: list[str] = []
+    for e in entries:
+        if not e:
+            continue
+        vid_url = e.get("url") or e.get("webpage_url")
+        if not vid_url and e.get("id"):
+            vid_url = f"https://www.youtube.com/watch?v={e['id']}"
+        if vid_url:
+            urls.append(vid_url)
+    return urls
 
 
 def probe_video_id(url: str) -> str:

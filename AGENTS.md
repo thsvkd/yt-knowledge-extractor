@@ -5,7 +5,7 @@
 ## 명령어
 
 - 설치: `uv sync` (GPU STT 가속: `uv sync --extra gpu`)
-- 실행(CLI): `uv run yke` (옵션: `--stage transcript|extract|integrate|all`, `--stt-model <name>`, `--force`)
+- 실행(CLI): `uv run yke` (옵션: `--stage transcript|extract|integrate|all`, `--stt-model <name>`, `--limit N`, `--force`)
 - 실행(GUI): `uv run yke-gui` (flet 데스크톱; CLI 와 동일한 `run_pipeline` 코어 재사용. 네이티브 빌드: `uv run flet build`)
 - 테스트: `uv run python -m unittest discover -s tests -t .`
 

@@ -37,7 +37,7 @@ from .pipeline import (
     stage5_extract,
     stage6_integrate,
 )
-from .utils import load_dotenv
+from .utils import is_channel_or_playlist_url, load_dotenv
 
 _YT_ID = re.compile(r"(?:v=|youtu\.be/|/shorts/|/embed/)([\w-]{11})")
 
@@ -85,6 +85,66 @@ ProgressCB = Callable[[Progress], None]
 
 def _noop(_p: Progress) -> None:  # 기본 콜백(아무것도 안 함)
     pass
+
+
+def _resolve_sources(
+    sources: list[str],
+    channel_limit: int | None,
+    failures: list[str],
+    on_progress: ProgressCB,
+    should_stop: Callable[[], bool],
+) -> list[str]:
+    """채널/재생목록 URL 을 최근 영상 URL 로 확장하고, 개별 영상은 그대로 둔다.
+
+    확장 실패는 ``failures`` 에 기록해 배치 전체를 막지 않는다. 결과는 순서를 보존해
+    중복 제거한다(같은 영상을 채널+개별로 함께 넣어도 한 번만 처리).
+    """
+    resolved: list[str] = []
+    for src in sources:
+        if should_stop():
+            break
+        if not is_channel_or_playlist_url(src):
+            resolved.append(src)
+            continue
+        on_progress(
+            Progress(
+                message=f"채널/재생목록 분석 중… {src}",
+                phase="transcript",
+                indeterminate=True,
+                transient=True,
+            )
+        )
+        try:
+            found = stage1_ingest.expand_source(
+                src,
+                channel_limit,
+                log=lambda m: on_progress(Progress(message=m, phase="transcript")),
+            )
+        except Exception as exc:
+            on_progress(
+                Progress(
+                    message=f"[{src}] 채널/재생목록 분석 실패: {type(exc).__name__}: {exc}",
+                    level="error",
+                    phase="transcript",
+                )
+            )
+            failures.append(src)
+            continue
+        on_progress(
+            Progress(
+                message=f"채널/재생목록에서 {len(found)}개 영상 확보: {src}",
+                level="success",
+                phase="transcript",
+            )
+        )
+        resolved.extend(found)
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for url in resolved:
+        if url not in seen:
+            seen.add(url)
+            deduped.append(url)
+    return deduped
 
 
 def build_transcript(
@@ -164,6 +224,7 @@ def run_pipeline(
     out_dir: str | Path | None = None,
     force: bool = False,
     stage: str = "all",
+    channel_limit: int | None = None,
     on_progress: ProgressCB = _noop,
     should_stop: Callable[[], bool] = lambda: False,
 ) -> PipelineResult:
@@ -184,10 +245,13 @@ def run_pipeline(
     out_dir = Path(out_dir if out_dir is not None else cfg.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # --- 0단계: 채널/재생목록 URL 을 최근 N개 영상으로 확장 ---
+    failures: list[str] = []
+    videos = _resolve_sources(videos, channel_limit, failures, on_progress, should_stop)
+
     # --- 1~4단계: 트랜스크립트 ---
     metas: dict[str, dict] = {}
     transcripts: dict[str, list[Segment]] = {}
-    failures: list[str] = []
     total = len(videos)
     for i, url in enumerate(videos, start=1):
         if should_stop():
@@ -243,6 +307,8 @@ def run_pipeline(
             )
         )
     if not transcripts:
+        if failures and not videos:
+            raise RuntimeError(f"처리할 영상이 없습니다 (채널/재생목록 분석 실패: {failures}).")
         raise RuntimeError("처리된 영상이 없습니다 (모든 영상 실패).")
 
     if stage == "transcript":
@@ -367,6 +433,12 @@ def main() -> None:
         default=None,
         help="config 의 stt.model 을 이번 실행에 한해 덮어씀 (예: medium, small)",
     )
+    ap.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="채널/재생목록 URL 을 넣었을 때 처리할 최근 영상 수 (개별 영상 URL 엔 무관)",
+    )
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -383,6 +455,7 @@ def main() -> None:
         cfg,
         force=args.force,
         stage=args.stage,
+        channel_limit=args.limit,
         on_progress=on_progress,
     )
 
