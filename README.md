@@ -52,6 +52,14 @@ uv run yke --stage integrate    # 6단계: output/wiki.md
 uv run yke --force
 ```
 
+## 테스트
+
+결정론적 순수 로직(유틸/자막 파싱/롤업 축소/정제/설정/렌더링)에 대한 특성화 테스트:
+
+```bash
+uv run python -m unittest discover -s tests -t .
+```
+
 ## 산출물
 
 ```

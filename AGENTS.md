@@ -4,6 +4,10 @@
 
 ## 명령어
 
+- 설치: `uv sync` (GPU STT 가속: `uv sync --extra gpu`)
+- 실행: `uv run yke` (옵션: `--stage transcript|extract|integrate|all`, `--stt-model <name>`, `--force`)
+- 테스트: `uv run python -m unittest discover -s tests -t .`
+
 ## 정의
 
 ### 용어 정의
