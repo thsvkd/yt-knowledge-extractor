@@ -547,6 +547,13 @@ class PipelineGUI:
             "yt-knowledge-extractor.exe" if sys.platform == "win32" else "yt-knowledge-extractor"
         )
         self._set_update_status("업데이트를 적용하고 재시작합니다…", ft.Colors.GREEN)
+        # apply_and_restart 는 os._exit 로 하드 종료하므로, 그 전에 위 안내를 클라이언트로
+        # 확실히 밀어낸다(창이 아무 메시지 없이 갑자기 사라지지 않도록).
+        try:
+            self.page.update()
+        except Exception:
+            logger.debug("최종 상태 flush 실패", exc_info=True)
+        time.sleep(0.4)
         # 이 호출은 사이드카를 띄우고 현재 프로세스를 종료한다(앱이 닫히고 새 버전이 재실행).
         updater.apply_and_restart(new_dir, app_exe=app_exe, install_dir=root)
 
