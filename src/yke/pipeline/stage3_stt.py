@@ -49,6 +49,34 @@ def _register_cuda_dll_dirs() -> list[str]:
     return added
 
 
+def _cuda_available() -> bool:
+    """CTranslate2 가 볼 수 있는 CUDA 장치가 하나라도 있는지. 실패하면 없음으로 본다.
+
+    (드라이버 API 만 조회하므로 번들 cuBLAS/cuDNN DLL 없이도 안전하게 호출된다.)
+    """
+    try:
+        import ctranslate2
+
+        return ctranslate2.get_cuda_device_count() > 0
+    except Exception:
+        return False
+
+
+def _resolve(device: str, compute_type: str) -> tuple[str, str]:
+    """device=auto 를 실제 장치로 확정하고, compute_type=auto 를 장치별 기본값으로 편다.
+
+    - device  auto → CUDA 가용 시 'cuda', 아니면 'cpu'.
+    - compute auto → GPU 는 'float16'(정밀도↑), CPU 는 'int8'(가볍고 빠름).
+      명시값(int8/float16/…)은 그대로 존중한다. auto 를 여기서 미리 확정해야
+      'CPU 인데 float16' 같은 조합(CTranslate2 가 float32 로 승격 → 오히려 느림)을 피한다.
+    """
+    if device == "auto":
+        device = "cuda" if _cuda_available() else "cpu"
+    if compute_type == "auto":
+        compute_type = "float16" if device == "cuda" else "int8"
+    return device, compute_type
+
+
 def _get_model(model: str, device: str, compute_type: str):
     if device != "cpu":
         _register_cuda_dll_dirs()
@@ -76,18 +104,19 @@ def _run(model, audio_path: Path, language: str, cfg) -> list[Segment]:
 
 
 def transcribe(audio_path: Path, language: str, cfg) -> list[Segment]:
-    # 1차: 설정된 device/compute_type
+    device, compute_type = _resolve(cfg.device, cfg.compute_type)
+    # 1차: 확정된 device/compute_type
     try:
-        model = _get_model(cfg.model, cfg.device, cfg.compute_type)
+        model = _get_model(cfg.model, device, compute_type)
         return _run(model, audio_path, language, cfg)
     except Exception as exc:
-        if cfg.device == "cpu":
+        if device == "cpu":
             raise
         print(
-            f"  (STT: '{cfg.device}/{cfg.compute_type}' 실패 -> cpu/int8 재시도: "
+            f"  (STT: '{device}/{compute_type}' 실패 -> cpu/int8 재시도: "
             f"{type(exc).__name__}: {exc})"
         )
-        _model_cache.pop((cfg.model, cfg.device, cfg.compute_type), None)
+        _model_cache.pop((cfg.model, device, compute_type), None)
 
     # 2차: CPU int8 폴백
     model = _get_model(cfg.model, "cpu", "int8")

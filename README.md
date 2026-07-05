@@ -35,7 +35,8 @@ uv sync
 2. `config/channel.yaml` 의 `videos` 목록에 대상 영상 URL 추가
 
 > STT GPU 가속(`stt.device: cuda`)은 CTranslate2 용 CUDA/cuDNN 런타임이 필요합니다.
-> 세팅이 없으면 `device: auto`가 실패 시 CPU(int8)로 자동 폴백합니다.
+> 기본값 `device: auto` + `compute_type: auto`는 GPU가 있으면 `float16`, 없으면 `int8`을
+> 자동 선택하고, GPU 사용이 실패하면 CPU(int8)로 폴백합니다.
 
 ## 실행
 

@@ -9,7 +9,8 @@ language: ko
 stt:
   model: large-v3        # tiny | base | small | medium | large-v3
   device: auto           # auto | cuda | cpu
-  compute_type: int8     # int8 | int8_float16 | float16 (GPU면 float16 권장)
+  compute_type: auto     # auto | int8 | int8_float16 | float16
+                         #   auto: GPU면 float16, CPU면 int8 로 자동 선택(권장)
   word_timestamps: true
 
 # 자막/STT 우선순위: ① 수동 자막 > ② faster-whisper STT > ③ 유튜브 자동자막

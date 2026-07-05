@@ -11,7 +11,7 @@ from pydantic import BaseModel
 class STTConfig(BaseModel):
     model: str = "large-v3"
     device: str = "auto"
-    compute_type: str = "int8"
+    compute_type: str = "auto"  # auto → GPU 는 float16, CPU 는 int8 (stage3_stt._resolve)
     word_timestamps: bool = True
 
 

@@ -34,7 +34,7 @@ class TestLoadConfig(unittest.TestCase):
         self.assertEqual(cfg.language, "en")
         self.assertEqual(cfg.stt.model, "small")
         self.assertEqual(cfg.stt.device, "cuda")
-        self.assertEqual(cfg.stt.compute_type, "int8")  # 미지정 기본 유지
+        self.assertEqual(cfg.stt.compute_type, "auto")  # 미지정 기본 유지
 
 
 if __name__ == "__main__":
