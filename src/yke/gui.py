@@ -798,8 +798,34 @@ def _view(page: ft.Page) -> None:
     PipelineGUI(page)
 
 
+def _ensure_flet_storage_path() -> None:
+    """Windows 에서 Flet 스토리지 경로를 ASCII 전용 디렉터리로 고정한다.
+
+    Flet 의 Flutter 레이어는 ``getApplicationDocumentsDirectory()`` 로 임시 파일을
+    저장할 기본 경로를 결정한다. Windows 에서 문서 폴더가 OneDrive 로 리다이렉트되면
+    '문서' 같은 비 ASCII 한글 이름이 포함될 수 있는데, 이 경우 Flutter 가
+    ``PathNotFoundException: Creation failed`` 를 던지며 앱이 아예 열리지 않는다.
+
+    ``FLET_STORAGE_PATH`` 를 ASCII 전용 경로로 미리 설정해 해당 경로를 우회한다.
+    이미 환경변수가 설정돼 있으면(사용자·CI 커스텀) 그 값을 그대로 사용한다.
+    Windows 외 플랫폼에서는 이 문제가 발생하지 않으므로 아무것도 하지 않는다.
+    """
+    if sys.platform != "win32":
+        return
+    if os.environ.get("FLET_STORAGE_PATH"):
+        return
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        path = os.path.join(local_app_data, "YtKnowledgeExtractor")
+    else:
+        import tempfile
+        path = os.path.join(tempfile.gettempdir(), "yke-flet")
+    os.environ["FLET_STORAGE_PATH"] = path
+
+
 def main() -> None:
     """GUI 실행 진입점(``yke-gui``)."""
+    _ensure_flet_storage_path()
     load_dotenv()  # 개발 편의: .env 의 자격증명을 환경변수로(배포본은 GUI 토큰 저장 사용)
     ft.run(_view)
 
