@@ -49,6 +49,54 @@ _GPU_DEPS = ("nvidia-cublas-cu12",)
 # Visual Studio C++ 빌드 도구 워크로드 식별자.
 _VC_TOOLS_COMPONENT = "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
 
+# flet 이 생성하는 네이티브 앱은 시작할 때마다(Python 이 뜨기도 전에) 내부적으로
+# ``<문서 폴더>\flet\<패키지명>`` 을 만든다(``FLET_APP_STORAGE_DATA`` 용, 앱 코드가
+# 쓰지 않아도 항상 실행됨 — flet 자체의 동작이라 우리 쪽에서 끌 방법이 없다). 이 시점은
+# Python 코드가 실행되기 전이라 앱 안에서 고칠 수 없다. 실측 확인된 가장 흔한 실패 원인은
+# Windows 보안의 "제어된 폴더 액세스"(랜섬웨어 방지)가 서명되지 않은 이 exe 의 "문서" 폴더
+# 쓰기를 차단해 ``PathNotFoundException`` 으로 앱이 아예 뜨지 못하는 것이다(README FAQ 참고 —
+# 근본 해결은 그 기능에서 이 앱을 허용하거나 꺼야 한다). 부차적으로 "문서" 가 OneDrive 로
+# 리다이렉트된 경우 동기화가 아직 안 끝난 시점의 경합도 같은 증상을 낼 수 있으므로, exe 실행
+# 전에 그 폴더를 미리(재시도하며) 만들어 그 경합만이라도 피하는 런처를 배포 폴더에 넣는다.
+_LAUNCHER_PS1 = """$docs = [Environment]::GetFolderPath('MyDocuments')
+$target = Join-Path $docs 'flet'
+for ($i = 0; $i -lt 5; $i++) {
+    try {
+        New-Item -ItemType Directory -Force -Path $target -ErrorAction Stop | Out-Null
+        exit 0
+    } catch {
+        Start-Sleep -Milliseconds 400
+    }
+}
+exit 1
+"""
+
+_LAUNCHER_BAT = """@echo off
+chcp 65001 >nul
+setlocal
+set "APP_DIR=%~dp0"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%APP_DIR%prepare_storage.ps1" >nul 2>&1
+if errorlevel 1 (
+    echo [경고] 문서 폴더 준비에 실패했습니다. 앱이 PathNotFoundException 으로 뜨지 않을 수 있습니다.
+    echo Windows 보안 -^> 바이러스 및 위협 방지 -^> 랜섬웨어 방지 관리 에서 "제어된 폴더 액세스"가
+    echo 켜져 있다면 이 앱을 허용 목록에 추가하거나 꺼 보세요. ^(README 의 자주 묻는 질문 참고^)
+)
+for %%F in ("%APP_DIR%*.exe") do (
+    start "" "%%~fF"
+    goto :done
+)
+echo 실행 파일을 찾지 못했습니다.
+pause
+:done
+endlocal
+"""
+
+
+def write_windows_launcher(dst: Path) -> None:
+    """문서 폴더 준비 실패(제어된 폴더 액세스 차단 등) 시 안내를 보여주는 실행 런처를 넣는다."""
+    (dst / "prepare_storage.ps1").write_text(_LAUNCHER_PS1, encoding="utf-8")
+    (dst / "실행.bat").write_text(_LAUNCHER_BAT, encoding="utf-8")
+
 
 def _target() -> str:
     system = platform.system()
@@ -117,7 +165,8 @@ def verify_artifact(dst: Path, target: str) -> None:
         exes = sorted(dst.glob("*.exe"))  # 최상위만 — 번들 루트의 앱 exe
         if not exes:
             fail(f"빌드가 끝났지만 {dst} 최상위에서 앱 .exe 를 찾지 못했습니다.")
-        info(f"완료(앱 실행파일): {exes[0]}")
+        write_windows_launcher(dst)
+        info(f"완료(앱 실행파일): {exes[0]}, 실행 런처: {dst / '실행.bat'}")
     else:
         if not any(dst.iterdir()):
             fail(f"빌드가 끝났지만 {dst} 가 비어 있습니다.")
