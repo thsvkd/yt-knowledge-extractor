@@ -13,7 +13,7 @@ CPU / GPU 차이:
     STT(faster-whisper→ctranslate2)의 CUDA 가속에는 cuBLAS 런타임(nvidia-cublas-cu12)이
     필요하다. --gpu 를 주면 이 패키지를 번들에 포함하고, 안 주면 CPU 전용으로 더 가볍게
     빌드한다. GPU 번들이라도 GPU 가 없으면 앱이 자동으로 CPU(int8)로 폴백한다.
-    (cuDNN 은 ctranslate2 가 자체 번들하므로 nvidia-cudnn-cu12 는 넣지 않는다 — 실측 확인.)
+    (cuDNN 은 ctranslate2 가 자체 번들하므로 nvidia-cudnn-cu12 는 넣지 않는다 - 실측 확인.)
 
     구현: flet build 는 [project.dependencies] 만 번들 requirements 로 쓰므로(optional
     extra 무시), --gpu 일 때 빌드 동안만 pyproject 의 dependencies 에 cuBLAS 를 주입하고

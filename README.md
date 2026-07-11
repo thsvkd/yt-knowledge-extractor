@@ -222,6 +222,16 @@ Windows 보안의 **제어된 폴더 액세스**(랜섬웨어 방지 기능)가 
 
 **요구사항**: Python 3.11+, [uv](https://docs.astral.sh/uv/)
 
+아래 `uv`/`flet` 명령을 감싼 편의 스크립트가 있습니다(모두 `--help` 지원).
+
+```bash
+python scripts/setup.py         # 환경 구성: uv sync (GPU 가속: --gpu)
+python scripts/run.py           # 앱 실행(GUI). CLI: python scripts/run.py --cli [옵션]
+python scripts/build.py         # 네이티브 데스크톱 앱 빌드 (GPU: --gpu)
+```
+
+각 단계를 직접 실행하려면 아래를 참고하십시오.
+
 **설치**
 
 ```bash
