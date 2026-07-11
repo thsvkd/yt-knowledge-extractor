@@ -37,7 +37,7 @@ from .pipeline import (
     stage5_extract,
     stage6_integrate,
 )
-from .utils import is_channel_or_playlist_url, load_dotenv
+from .utils import is_channel_or_playlist_url
 
 _YT_ID = re.compile(r"(?:v=|youtu\.be/|/shorts/|/embed/)([\w-]{11})")
 
@@ -496,8 +496,6 @@ def main() -> None:
         sys.stdout.reconfigure(errors="replace")
     except Exception:
         pass
-
-    load_dotenv()  # .env 의 CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY 를 환경변수로
 
     ap = argparse.ArgumentParser(description="유튜브 채널 지식 문서화 PoC")
     ap.add_argument("--config", default="config/channel.yaml")

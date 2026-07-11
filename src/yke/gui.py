@@ -16,16 +16,15 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 
 import flet as ft
 
-from . import __version__, token_store, updater
+from . import __version__, updater
 from .config import Config, LLMConfig, load_config
+from .llm.claude_client import is_available as _claude_cli_available
 from .run import Progress, PipelineResult, run_pipeline
-from .utils import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -68,14 +67,6 @@ _DEFAULT_LIMIT = 5
 _DEFAULT_CONFIG_PATH = "config/channel.yaml"
 
 
-def _has_llm_credentials() -> bool:
-    return bool(
-        os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
-        or os.environ.get("ANTHROPIC_AUTH_TOKEN")
-        or os.environ.get("ANTHROPIC_API_KEY")
-    )
-
-
 def _load_base_config(path: str) -> Config:
     """설정 파일에서 노출하지 않는 기본값(compute_type/subtitles/청크 크기 등)을 가져온다.
 
@@ -97,7 +88,6 @@ class PipelineGUI:
         self._stop = threading.Event()
         self._last_result: PipelineResult | None = None
         self._last_out_dir: Path | None = None
-        self._saved_location = ""  # 저장된 토큰의 위치 라벨(앱 저장소 / 파일: ...)
         self._pending_release: updater.Release | None = None  # 다운로드 대기 중인 업데이트
         # 상태 텍스트는 백그라운드 스레드가 값만 기록하고, 렌더 틱이 일괄 반영한다.
         self._status_lock = threading.Lock()
@@ -107,8 +97,6 @@ class PipelineGUI:
         self._status_color: str | None = None
         self.base_cfg = _load_base_config(_DEFAULT_CONFIG_PATH)
         self._build()
-        # 저장된 토큰을 비동기로 불러와 입력칸을 채운다(shared_preferences 는 async).
-        self.page.run_task(self._init_token)
         # 데몬 스레드라 창을 닫으면 함께 종료된다.
         self._render_thread = threading.Thread(
             target=self._ui_ticker, name="gui-render-tick", daemon=True
@@ -211,33 +199,15 @@ class PipelineGUI:
             value=cfg.llm.model,
             width=300,
             options=self._llm_options(cfg.llm.model),
+            # 프리셋 3종 외의 모델 ID(신규 모델 등)도 직접 입력할 수 있게 연다.
+            editable=True,
+            hint_text="목록에 없으면 모델 ID를 직접 입력하세요",
+            hint_style=_hint,
         )
         self.force_cb = ft.Checkbox(label="강제로 재생성", value=False)
 
-        # Claude 토큰(선택): 저장하면 다음 실행에 자동 로드. 저장 위치는 앱 저장소가 기본이며,
-        # 파일 경로를 지정하면 그 JSON 파일에 저장/로드한다. 개발 중이면 환경변수도 폴백으로 인식.
-        self.token_field = ft.TextField(
-            label="Claude 토큰 (전체 단계에 필요)",
-            hint_text="sk-ant-oat01-...  또는  sk-ant-api03-...",
-            hint_style=_hint,
-            password=True,
-            can_reveal_password=True,
-            expand=True,
-            on_change=lambda _e: self._refresh_cred_status(),
-        )
-        self.token_path_field = ft.TextField(
-            label="토큰 저장 파일 (선택 — 비우면 앱 저장소)",
-            hint_text="예: D:/keys/yke-token.json",
-            hint_style=_hint,
-            expand=True,
-        )
-        self.token_path_browse_btn = ft.Button(
-            "파일 선택", icon=ft.Icons.SAVE, on_click=self._pick_token_file
-        )
-        self.token_save_btn = ft.Button("토큰 저장", icon=ft.Icons.KEY, on_click=self._on_save_token)
-        self.token_clear_btn = ft.Button(
-            "토큰 지우기", icon=ft.Icons.DELETE_OUTLINE, on_click=self._on_clear_token
-        )
+        # 지식 추출·통합은 로컬 Claude Code CLI(`claude -p`)를 호출한다. 인증은 CLI 의
+        # 로그인 상태를 그대로 쓰므로 앱에서 별도로 토큰을 입력·저장하지 않는다.
         self.cred_status = ft.Text(size=12, color=_muted_color)
 
         # 자체 업데이트: 확인 버튼 + 상태. 새 버전이 있으면 같은 버튼이 '업데이트 후 재시작'으로 바뀐다.
@@ -257,15 +227,8 @@ class PipelineGUI:
                                 wrap=True,
                             ),
                             self.llm_model_dd,
-                            self.force_cb,
-                            ft.Divider(),
-                            self.token_field,
-                            ft.Row(
-                                [self.token_path_field, self.token_path_browse_btn],
-                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            ),
-                            ft.Row([self.token_save_btn, self.token_clear_btn], spacing=8),
                             self.cred_status,
+                            self.force_cb,
                             ft.Divider(),
                             ft.Row(
                                 [self.update_btn, self.update_status],
@@ -337,19 +300,25 @@ class PipelineGUI:
             options.insert(0, ft.dropdown.Option(key=current, text=current))
         return options
 
+    def _selected_llm_model(self) -> str:
+        """언어 모델 드롭다운의 실제 선택값(모델 ID)을 얻는다.
+
+        editable 드롭다운이라 프리셋을 고르면 ``value``(키)가, 직접 입력하면 ``text``만
+        갱신될 수 있다. ``text``가 프리셋 라벨과 일치하면 그 키로, 아니면 입력값 그대로
+        (커스텀 모델 ID)를 쓴다.
+        """
+        text = (self.llm_model_dd.text or "").strip()
+        if text:
+            by_label = {label: mid for label, mid in _LLM_MODELS}
+            return by_label.get(text, text)
+        return self.llm_model_dd.value or ""
+
     def _llm_controls(self) -> tuple[ft.Control, ...]:
         """'전체(지식 문서화)' 단계에서만 필요한 LLM 관련 컨트롤."""
-        return (
-            self.llm_model_dd,
-            self.token_field,
-            self.token_path_field,
-            self.token_path_browse_btn,
-            self.token_save_btn,
-            self.token_clear_btn,
-        )
+        return (self.llm_model_dd,)
 
     def _apply_llm_enabled(self) -> None:
-        """실행 단계가 LLM 을 쓰지 않으면(스크립트 추출까지) 언어 모델·토큰 UI 를 비활성화한다."""
+        """실행 단계가 LLM 을 쓰지 않으면(스크립트 추출까지) 언어 모델 UI 를 비활성화한다."""
         enabled = (self.stage_dd.value or _DEFAULT_STAGE) in _STAGES_NEEDING_LLM
         for c in self._llm_controls():
             c.disabled = not enabled
@@ -361,63 +330,6 @@ class PipelineGUI:
         if path:
             target.value = path
             target.update()
-
-    async def _pick_token_file(self, _e: ft.ControlEvent | None = None) -> None:
-        """토큰을 저장할 파일 경로를 고른다(없으면 앱 저장소 사용)."""
-        path = await self.file_picker.save_file(
-            dialog_title="토큰 저장 파일 선택", file_name="yke-token.json"
-        )
-        if path:
-            self.token_path_field.value = path
-            self._safe_update(self.token_path_field)
-
-    # -- 토큰 저장/로드(async — shared_preferences) ----------------------
-    async def _init_token(self) -> None:
-        """저장된 토큰(과 지정 파일 경로)을 불러와 입력칸을 채운다."""
-        try:
-            token, location = await token_store.load(self.page.shared_preferences)
-            path = await token_store.get_path(self.page.shared_preferences)
-        except Exception:
-            logger.warning("저장된 토큰 로드 실패", exc_info=True)
-            return
-        if path:
-            self.token_path_field.value = path
-            self._safe_update(self.token_path_field)
-        if token:
-            self.token_field.value = token
-            self._saved_location = location
-            self._safe_update(self.token_field)
-        self._refresh_cred_status()
-
-    async def _on_save_token(self, _e: ft.ControlEvent) -> None:
-        token = self.token_field.value.strip()
-        if not token:
-            self._set_cred_status("저장할 토큰이 없습니다.", ft.Colors.RED)
-            return
-        try:
-            location = await token_store.save(
-                self.page.shared_preferences, token, self.token_path_field.value.strip() or None
-            )
-        except Exception as exc:
-            logger.error("토큰 저장 실패", exc_info=True)
-            self._set_cred_status(f"토큰 저장 실패: {exc}", ft.Colors.RED)
-            return
-        self._saved_location = location
-        self._set_cred_status(f"토큰 저장됨 — {location} ✓", ft.Colors.GREEN)
-
-    async def _on_clear_token(self, _e: ft.ControlEvent) -> None:
-        try:
-            await token_store.clear(self.page.shared_preferences)
-        except Exception as exc:
-            logger.error("토큰 삭제 실패", exc_info=True)
-            self._set_cred_status(f"토큰 삭제 실패: {exc}", ft.Colors.RED)
-            return
-        self.token_field.value = ""
-        self.token_path_field.value = ""
-        self._saved_location = ""
-        self._safe_update(self.token_field)
-        self._safe_update(self.token_path_field)
-        self._refresh_cred_status()
 
     def _open_folder(self, _e: ft.ControlEvent) -> None:
         # 마지막 실행에 실제로 사용한 저장 폴더를 연다. 실행 뒤 필드를 수정해도 결과가
@@ -455,15 +367,13 @@ class PipelineGUI:
         self._set_status_now("중단 요청됨 — 현재 작업을 마치고 멈춥니다…", ft.Colors.AMBER)
 
     def _refresh_cred_status(self) -> None:
-        """토큰 입력/저장 상태와 시스템 자격증명 유무를 상태 텍스트에 반영한다."""
-        if self.token_field.value.strip():
-            where = f" (저장: {self._saved_location})" if self._saved_location else " (미저장)"
-            self._set_cred_status(f"토큰 입력됨 — 이번 실행에 사용됩니다.{where} ✓", ft.Colors.GREEN)
-        elif _has_llm_credentials():
-            self._set_cred_status("시스템 자격증명 감지됨 ✓", ft.Colors.GREEN)
+        """Claude Code CLI 감지 여부를 상태 텍스트에 반영한다."""
+        if _claude_cli_available():
+            self._set_cred_status("Claude CLI 감지됨 ✓", ft.Colors.GREEN)
         else:
             self._set_cred_status(
-                "토큰 없음 — '전체 (지식 문서화까지)' 단계에 Claude 토큰이 필요합니다.",
+                "Claude CLI 를 찾을 수 없습니다 — '전체 (지식 문서화까지)' 단계에는 "
+                "claude.com/claude-code 설치 + `claude login` 이 필요합니다.",
                 self._muted_color,
             )
 
@@ -587,14 +497,12 @@ class PipelineGUI:
         if not urls:
             self._set_status_now("유튜브 URL 을 한 줄에 하나씩 입력하세요.", ft.Colors.RED)
             return
-        # 자격증명 게이트: 토큰이 입력됐거나 시스템 자격증명이 있으면 통과.
-        # 실제 env 주입은 실행 스레드(_run)에서 실행 단위로만 하고 끝나면 되돌린다.
+        # 자격증명 게이트: '전체' 단계는 로컬 Claude Code CLI 가 있어야 한다.
         stage = self.stage_dd.value or _DEFAULT_STAGE
-        has_token = bool(self.token_field.value.strip())
-        if stage in _STAGES_NEEDING_LLM and not has_token and not _has_llm_credentials():
+        if stage in _STAGES_NEEDING_LLM and not _claude_cli_available():
             self._set_status_now(
-                "'전체 (지식 문서화까지)' 단계에는 Claude 토큰이 필요합니다. "
-                "고급 옵션에서 토큰을 입력·저장하세요.",
+                "'전체 (지식 문서화까지)' 단계에는 Claude Code CLI 가 필요합니다. "
+                "claude.com/claude-code 설치 후 `claude login` 으로 로그인하세요.",
                 ft.Colors.RED,
             )
             return
@@ -613,7 +521,6 @@ class PipelineGUI:
 
         cfg = self._read_config()
         self._last_out_dir = Path(cfg.output_dir).resolve()
-        restore_env = self._inject_token_env()
         try:
             result = run_pipeline(
                 self._urls(),
@@ -633,40 +540,8 @@ class PipelineGUI:
             self._set_status(f"오류: {exc}", ft.Colors.RED)
             self._set_running(False)
             return
-        finally:
-            restore_env()
 
         self._finish(result)
-
-    # -- 자격증명 주입(실행 단위로만) ------------------------------------
-    _CRED_KEYS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY")
-
-    def _inject_token_env(self) -> Callable[[], None]:
-        """토큰 필드 값을 이번 실행에 한해 환경변수로 주입하고, 원상복구 콜백을 돌려준다.
-
-        붙여넣은 토큰이 이번 실행의 유일한 자격증명이 되도록 관련 키를 모두 비운 뒤 설정한다
-        (그렇지 않으면 기존 OAuth 토큰이 우선순위에서 이겨 붙여넣은 API 키가 무시된다).
-        실행이 끝나면 복구해, 필드를 비우면 시스템 자격증명으로 자연스럽게 폴백된다.
-        """
-        saved = {k: os.environ.get(k) for k in self._CRED_KEYS}
-
-        def restore() -> None:
-            for k, v in saved.items():
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
-
-        token = self.token_field.value.strip()
-        if not token:
-            return restore  # 주입 없음 — 복구도 무해(원본 그대로 되돌림)
-        for k in self._CRED_KEYS:
-            os.environ.pop(k, None)
-        if token.startswith("sk-ant-oat"):
-            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = token
-        else:
-            os.environ["ANTHROPIC_API_KEY"] = token
-        return restore
 
     def _read_config(self) -> Config:
         """UI 필드로 base 설정을 덮어써 이번 실행용 Config 를 만든다.
@@ -691,7 +566,7 @@ class PipelineGUI:
             ),
             subtitles=base.subtitles,
             llm=LLMConfig(
-                model=self.llm_model_dd.value or base.llm.model,
+                model=self._selected_llm_model() or base.llm.model,
                 max_chars_per_chunk=base.llm.max_chars_per_chunk,
             ),
             output_dir=folder,
@@ -806,7 +681,6 @@ def _view(page: ft.Page) -> None:
 
 def main() -> None:
     """GUI 실행 진입점(``yke-gui``)."""
-    load_dotenv()  # 개발 편의: .env 의 자격증명을 환경변수로(배포본은 GUI 토큰 저장 사용)
     ft.run(_view)
 
 

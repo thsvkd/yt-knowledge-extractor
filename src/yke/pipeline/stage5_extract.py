@@ -67,7 +67,7 @@ def extract_units(segments, video_id: str, llm_cfg, client) -> list[KnowledgeUni
             f"다음은 영상 트랜스크립트의 일부입니다. 지식 원자 단위를 JSON 배열로 추출하세요.\n\n{chunk}"
         )
         try:
-            text = client.complete(_SYSTEM, user, model=llm_cfg.model, max_tokens=8000)
+            text = client.complete(_SYSTEM, user, model=llm_cfg.model)
         except Exception as exc:  # 한 청크 실패가 전체 추출을 무너뜨리지 않도록
             print(f"    청크 {idx}/{len(chunks)} LLM 실패 -> 건너뜀: {type(exc).__name__}: {exc}")
             continue

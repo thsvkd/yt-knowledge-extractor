@@ -3,25 +3,7 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-from pathlib import Path
-
-
-def load_dotenv(path: str | Path = ".env") -> None:
-    """의존성 없이 .env 를 읽어 os.environ 에 주입한다 (이미 설정된 키는 유지)."""
-    p = Path(path)
-    if not p.exists():
-        return
-    for raw in p.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        key = key.strip()
-        val = val.strip().strip('"').strip("'")
-        if key:
-            os.environ.setdefault(key, val)
 
 
 def is_channel_or_playlist_url(url: str) -> bool:

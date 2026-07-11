@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
 import unittest
-from pathlib import Path
 
-from yke.utils import fmt_ts, load_dotenv, parse_json_array, ts_to_seconds
+from yke.utils import fmt_ts, parse_json_array, ts_to_seconds
 
 
 class TestFmtTs(unittest.TestCase):
@@ -51,26 +48,6 @@ class TestParseJsonArray(unittest.TestCase):
 
     def test_empty_returns_empty(self):
         self.assertEqual(parse_json_array(""), [])
-
-
-class TestLoadDotenv(unittest.TestCase):
-    def test_loads_but_preserves_existing(self):
-        d = Path(tempfile.mkdtemp())
-        (d / ".env").write_text('A_TOKEN=xyz\n# comment\nPRESET=override\nQ="hi"\n', encoding="utf-8")
-        os.environ.pop("A_TOKEN", None)
-        os.environ.pop("Q", None)
-        os.environ["PRESET"] = "keep"
-        try:
-            load_dotenv(d / ".env")
-            self.assertEqual(os.environ.get("A_TOKEN"), "xyz")
-            self.assertEqual(os.environ.get("Q"), "hi")  # 따옴표 제거
-            self.assertEqual(os.environ.get("PRESET"), "keep")  # setdefault: 기존 값 유지
-        finally:
-            for k in ("A_TOKEN", "Q", "PRESET"):
-                os.environ.pop(k, None)
-
-    def test_missing_file_is_noop(self):
-        load_dotenv(Path(tempfile.mkdtemp()) / "nope.env")  # 예외 없이 통과
 
 
 if __name__ == "__main__":

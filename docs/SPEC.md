@@ -96,14 +96,15 @@ CLI는 `data_dir`(캐시)와 `output_dir`(산출물)을 분리할 수 있고, GU
   진행은 `Progress` 이벤트 스트림, 취소는 `should_stop`으로 영상/단계 경계에서 협조적으로.
 - **CLI** (`yke`): `--stage transcript|extract|integrate|all`, `--stt-model`, `--limit`, `--force`.
 - **GUI** (`yke-gui`, flet 데스크톱): 영상/채널 URL 입력(+ 최근 N개), 실행 단계 2종
-  (`전체(지식 문서화까지)` / `스크립트 추출까지`(기본) — 후자 선택 시 언어 모델·토큰 UI 비활성화),
+  (`전체(지식 문서화까지)` / `스크립트 추출까지`(기본) — 후자 선택 시 언어 모델 UI 비활성화),
   스크립트 변환 모델·GPU 가속·언어 모델 선택, 진행바·로그·중단, 산출물 열기.
 
 ## 7. 자격증명 · 배포 · 자체 업데이트
 
-- **LLM 자격증명**: 우선순위 `CLAUDE_CODE_OAUTH_TOKEN` > `ANTHROPIC_AUTH_TOKEN` >
-  `ANTHROPIC_API_KEY`. 개발은 `.env`, **배포본은 GUI에서 토큰을 앱 저장소(flet
-  shared_preferences) 또는 사용자 지정 파일에 저장**해 다음 실행에 자동 로드한다.
+- **LLM 호출**: Anthropic SDK/토큰 대신 로컬 **Claude Code CLI**(`claude -p`, 헤드리스 모드)를
+  subprocess 로 호출한다(`src/yke/llm/claude_client.py`). 인증은 CLI 자체의 로그인 상태
+  (`claude login`)를 그대로 쓰므로 앱이 토큰을 저장·주입하지 않는다. CLI 를 PATH 에서 찾지
+  못하면 `ClaudeClient` 생성 시점에 안내 메시지와 함께 실패한다.
 - **빌드**: `scripts/build.py [--gpu]` → `dist/yke-<cpu|gpu>-<platform>/` 폴더 번들 +
   `.zip`. GPU 변형은 **cuBLAS만** 포함한다(ctranslate2가 cuDNN 로더를 자체 번들하고
   whisper 추론에 cuDNN 서브라이브러리를 쓰지 않음 — 실측 확인). CPU≈419MB, GPU≈1.4GB(zip 752MB).

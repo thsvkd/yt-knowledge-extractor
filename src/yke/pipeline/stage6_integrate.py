@@ -52,14 +52,12 @@ def integrate(all_units: list[KnowledgeUnit], llm_cfg, client) -> list[ConceptCl
         return []
     payload = json.dumps([u.model_dump() for u in all_units], ensure_ascii=False, indent=1)
     user = f"다음 지식 원자 단위들을 통합하세요:\n\n{payload}"
-    text = client.complete(
-        _SYSTEM, user, model=llm_cfg.model, max_tokens=16000, stream=True
-    )
+    text = client.complete(_SYSTEM, user, model=llm_cfg.model)
     parsed = parse_json_array(text)
     if not parsed and text.strip():
         print(
             "  경고: 통합 응답을 JSON 배열로 파싱하지 못했습니다"
-            " (max_tokens 잘림/형식 오류 가능) — clusters 가 비게 됩니다."
+            " (응답 잘림/형식 오류 가능) — clusters 가 비게 됩니다."
         )
     clusters: list[ConceptCluster] = []
     for obj in parsed:
