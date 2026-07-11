@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -90,7 +91,8 @@ class Progress:
     """파이프라인 진행 상황 이벤트.
 
     CLI 는 ``message`` 만 출력하고(단, ``transient`` 는 건너뜀), GUI 는 ``phase``·
-    ``done``/``total``·``indeterminate`` 로 진행바와 상태 텍스트를 갱신한다.
+    ``done``/``total``·``indeterminate``·``sub_progress`` 로 진행바와 상태 텍스트를
+    갱신한다.
     """
 
     message: str
@@ -100,6 +102,10 @@ class Progress:
     total: int | None = None  # 현재 단계의 전체 개수
     indeterminate: bool = False  # 끊을 수 없는 단일 작업(다운로드/STT/LLM) 진행 중
     transient: bool = False  # 스피너용 임시 상태 — 영속 로그(CLI 출력)에는 남기지 않음
+    # 현재 진행 중인 단일 작업(예: 한 영상의 STT) 내부의 세부 진행률(0.0~1.0).
+    # 있으면 GUI 진행바는 (done + sub_progress) / total 로 계산해, "몇 번째 영상"
+    # 뿐 아니라 "그 영상의 어디까지" 도 촘촘히 반영한다.
+    sub_progress: float | None = None
 
 
 @dataclass
@@ -120,6 +126,54 @@ ProgressCB = Callable[[Progress], None]
 
 def _noop(_p: Progress) -> None:  # 기본 콜백(아무것도 안 함)
     pass
+
+
+def _fmt_hms(seconds: float) -> str:
+    """초를 "M:SS" 또는(1시간 이상) "H:MM:SS" 로 표시한다."""
+    total = max(0, int(seconds))
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+# STT 진행 이벤트를 너무 자주 흘리면(세그먼트마다) GUI 갱신이 밀릴 수 있어 최소 간격으로
+# 솎아낸다. 마지막(100%) 이벤트는 간격과 무관하게 항상 통과시켜 바가 끝까지 차게 한다.
+_STT_PROGRESS_MIN_INTERVAL_S = 0.2
+
+
+def _make_stt_progress_reporter(
+    on_progress: ProgressCB, video_index: int, total_videos: int, url: str
+) -> Callable[[float, float], None]:
+    """영상 하나의 STT 세부 진행(완료 초/전체 초)을 :class:`Progress` 이벤트로 변환한다.
+
+    ``sub_progress`` 에 0~1 분수를 실어, GUI 가 "몇 번째 영상" 뿐 아니라 그 영상의 STT 가
+    어디까지 갔는지까지 반영해 바를 촘촘히 채우게 한다. transient 라 CLI 출력·영속 로그에는
+    남지 않는다(스피너/바 전용 갱신).
+    """
+    last_emit = 0.0
+
+    def _report(done_s: float, total_s: float) -> None:
+        nonlocal last_emit
+        frac = min(1.0, done_s / total_s) if total_s else 0.0
+        now = time.monotonic()
+        if frac < 1.0 and now - last_emit < _STT_PROGRESS_MIN_INTERVAL_S:
+            return
+        last_emit = now
+        on_progress(
+            Progress(
+                message=(
+                    f"[{video_index}/{total_videos}] STT 변환 중… "
+                    f"{_fmt_hms(done_s)} / {_fmt_hms(total_s)} ({frac:.0%}) — {url}"
+                ),
+                phase="transcript",
+                done=video_index - 1,
+                total=total_videos,
+                transient=True,
+                sub_progress=frac,
+            )
+        )
+
+    return _report
 
 
 def _resolve_sources(
@@ -189,10 +243,13 @@ def build_transcript(
     force: bool,
     *,
     log: Callable[[str], None] = print,
+    on_stt_progress: stage3_stt.ProgressCB | None = None,
 ):
     """1~4단계: 영상 하나의 트랜스크립트를 생성/로딩한다.
 
     ``log`` 로 진행 메시지를 흘려 CLI 는 stdout 에, GUI 는 로그 뷰에 보이게 한다.
+    ``on_stt_progress`` 는 STT 가 실제로 돌 때만(자막 채택 시엔 호출되지 않음) 세그먼트
+    단위로 (완료 초, 전체 초)를 알려 GUI 진행바를 세밀하게 갱신할 수 있게 한다.
     """
     # 완전 캐시된 경우 URL 에서 id 를 뽑아 네트워크 조회 없이 로딩(오프라인 재실행 가능)
     cached_id = _video_id_from_url(url)
@@ -225,7 +282,9 @@ def build_transcript(
             return None
         try:
             log(f"[{vid}] STT 실행 (faster-whisper {cfg.stt.model})...")
-            return stage3_stt.transcribe(audio, cfg.language, cfg.stt, log=log)
+            return stage3_stt.transcribe(
+                audio, cfg.language, cfg.stt, log=log, on_progress=on_stt_progress
+            )
         except Exception as exc:
             log(f"[{vid}] STT 실패: {type(exc).__name__}: {exc}")
             return None
@@ -346,6 +405,7 @@ def run_pipeline(
                 data_dir,
                 force,
                 log=lambda m: on_progress(Progress(message=m, phase="transcript")),
+                on_stt_progress=_make_stt_progress_reporter(on_progress, i, total, url),
             )
         except Exception as exc:  # 한 영상 실패가 배치 전체를 막지 않도록
             on_progress(

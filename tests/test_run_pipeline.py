@@ -20,7 +20,7 @@ def _seg() -> list[Segment]:
     return [Segment(start=0.0, end=1.0, text="hi")]
 
 
-def _fake_bt(url, cfg, data_dir, force, *, log=print):
+def _fake_bt(url, cfg, data_dir, force, *, log=print, on_stt_progress=None):
     vid = "v_" + url
     return vid, {"id": vid, "title": url}, _seg()
 
@@ -57,8 +57,26 @@ class TestRunPipeline(unittest.TestCase):
         ]
         self.assertEqual(len(transcript_success), 2)
 
+    def test_stt_sub_progress_reported_and_transient(self) -> None:
+        # STT 세부 진행(초 단위)이 combined sub_progress 로 변환되어 흘러가는지,
+        # 그리고 스피너/바 전용(transient)이라 영속 로그에는 안 남는지 확인한다.
+        def bt(url, cfg, data_dir, force, *, log=print, on_stt_progress=None):
+            if on_stt_progress:
+                on_stt_progress(30.0, 100.0)
+                on_stt_progress(100.0, 100.0)
+            return "v_" + url, {"id": "v_" + url}, _seg()
+
+        events: list[run.Progress] = []
+        with mock.patch.object(run, "build_transcript", side_effect=bt):
+            run.run_pipeline(["a"], self.cfg, stage="transcript", on_progress=events.append)
+
+        sub_events = [e for e in events if e.sub_progress is not None]
+        self.assertTrue(any(abs(e.sub_progress - 0.3) < 1e-9 for e in sub_events))
+        self.assertTrue(any(e.sub_progress == 1.0 for e in sub_events))
+        self.assertTrue(all(e.transient for e in sub_events))
+
     def test_failure_is_isolated(self) -> None:
-        def bt(url, cfg, data_dir, force, *, log=print):
+        def bt(url, cfg, data_dir, force, *, log=print, on_stt_progress=None):
             if url == "bad":
                 raise RuntimeError("boom")
             return "v_ok", {"id": "v_ok"}, _seg()
@@ -80,7 +98,7 @@ class TestRunPipeline(unittest.TestCase):
     def test_stop_between_videos(self) -> None:
         processed = {"n": 0}
 
-        def bt(url, cfg, data_dir, force, *, log=print):
+        def bt(url, cfg, data_dir, force, *, log=print, on_stt_progress=None):
             processed["n"] += 1
             return "v_" + url, {"id": "v_" + url}, _seg()
 
@@ -150,6 +168,41 @@ class TestRunPipeline(unittest.TestCase):
         self.assertEqual(res.unit_count, 1)
         self.assertEqual(res.concept_count, 0)
         self.assertIsNone(res.wiki_path)
+
+
+class TestFmtHms(unittest.TestCase):
+    def test_under_hour(self):
+        self.assertEqual(run._fmt_hms(65), "1:05")
+
+    def test_over_hour(self):
+        self.assertEqual(run._fmt_hms(3661), "1:01:01")
+
+    def test_negative_clamped_to_zero(self):
+        self.assertEqual(run._fmt_hms(-5), "0:00")
+
+
+class TestSttProgressReporterThrottle(unittest.TestCase):
+    """빈번한 세그먼트 진행 콜백을 최소 간격으로 솎아내되, 100% 는 항상 통과시킨다."""
+
+    def test_throttles_rapid_updates(self):
+        events: list[run.Progress] = []
+        reporter = run._make_stt_progress_reporter(events.append, 1, 1, "u")
+        with mock.patch.object(run.time, "monotonic", side_effect=[100.0, 100.05, 100.3]):
+            reporter(10, 100)  # 최초 호출 -> 항상 통과
+            reporter(15, 100)  # 0.05s 뒤 -> 최소 간격(0.2s) 미달로 억제
+            reporter(90, 100)  # 0.3s 뒤 -> 간격 충족, 통과
+        self.assertEqual(len(events), 2)
+        self.assertAlmostEqual(events[0].sub_progress, 0.1)
+        self.assertAlmostEqual(events[1].sub_progress, 0.9)
+
+    def test_100_percent_always_emitted(self):
+        events: list[run.Progress] = []
+        reporter = run._make_stt_progress_reporter(events.append, 1, 1, "u")
+        with mock.patch.object(run.time, "monotonic", side_effect=[100.0, 100.01]):
+            reporter(50, 100)  # 최초 호출 -> 통과
+            reporter(100, 100)  # 100%: 간격 미달이어도 항상 통과
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[1].sub_progress, 1.0)
 
 
 class TestCaptionValidation(unittest.TestCase):
@@ -234,7 +287,7 @@ class TestBuildTranscriptPriority(unittest.TestCase):
     def test_stt_first_uses_stt_and_skips_captions(self):
         meta = self._meta(manual_sub_lang="ko", auto_sub_lang="ko")
 
-        def stt(audio, lang, cfg, log=print):
+        def stt(audio, lang, cfg, log=print, on_progress=None):
             return [Segment(start=0, end=580, text="STT 받아쓰기 결과")]
 
         parse = mock.Mock(return_value=[Segment(start=0, end=600, text="수동 자막")])
@@ -247,7 +300,7 @@ class TestBuildTranscriptPriority(unittest.TestCase):
         # stt_first=False 로 수동 자막을 먼저 시도하지만, 한 줄짜리라 STT 로 폴백.
         meta = self._meta(manual_sub_lang="ko")
 
-        def stt(audio, lang, cfg, log=print):
+        def stt(audio, lang, cfg, log=print, on_progress=None):
             return [Segment(start=0, end=580, text="STT 받아쓰기 결과")]
 
         parse = mock.Mock(return_value=[Segment(start=0, end=5, text="한 줄짜리 깨진 자막")])
@@ -261,7 +314,7 @@ class TestBuildTranscriptPriority(unittest.TestCase):
     def test_stt_failure_falls_back_to_valid_manual(self):
         meta = self._meta(manual_sub_lang="ko")
 
-        def stt(audio, lang, cfg, log=print):
+        def stt(audio, lang, cfg, log=print, on_progress=None):
             raise RuntimeError("stt boom")
 
         parse = mock.Mock(

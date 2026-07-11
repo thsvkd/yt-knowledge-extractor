@@ -581,8 +581,12 @@ class PipelineGUI:
             self._append_log(p.message, p.level)
         # 상태 텍스트 = 최신 메시지.
         self._set_status(p.message, color)
-        # 진행바.
-        if p.indeterminate:
+        # 진행바. sub_progress 가 있으면(예: STT 세그먼트 진행) "몇 번째 항목" 뿐 아니라
+        # 그 항목 내부의 세부 진행률까지 더해 촘촘하게 채운다 — indeterminate 스피너보다
+        # 우선한다(수치가 있는데 스피너로 되돌릴 이유가 없다).
+        if p.total and p.sub_progress is not None:
+            self.progress.value = min(1.0, ((p.done or 0) + p.sub_progress) / p.total)
+        elif p.indeterminate:
             self.progress.value = None
         elif p.total:
             self.progress.value = (p.done or 0) / p.total
