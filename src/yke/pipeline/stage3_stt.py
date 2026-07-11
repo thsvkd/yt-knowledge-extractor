@@ -4,6 +4,20 @@
 추론(encode) 단계에서 실패한다. 로드 시점뿐 아니라 추론 실패까지 잡아 CPU(int8)로
 자동 폴백한다. 화자 분리(diarization)는 이번 PoC 범위 밖 — 필요 시 이 단계 뒤에
 WhisperX 파이프라인을 끼우면 된다.
+
+배치 추론(BatchedInferencePipeline)은 GPU 전용이 아니다 — CPU(small, int8)에서도
+실측 RTF 0.109 → 0.041(~2.6배, 기본 batch_size=4 기준)로 유의미하게 빠르다(VAD 청크를
+배치로 묶어 CPU 코어를 더 잘 채우기 때문). cpu_threads 를 물리 코어 수로 명시하면
+추가로 더 빨라지지만(실측 0.041 → 0.037), 하이퍼스레딩 논리 코어 수(os.cpu_count())로
+그대로 올리면 스레드 경합으로 오히려 느려진다(실측 확인). 물리 코어 수를 이식성 있게
+감지할 표준 방법이 없어 여기서는 cpu_threads 를 건드리지 않고 faster-whisper 기본값에
+맡긴다 — 배치만으로 이미 대부분의 이득을 얻는다.
+
+CPU 의 batch_size 는 (처리량이 더 좋은 16 이 아니라) 4 로 상한을 둔다 — 배치가 통째로
+끝나야 그 안의 세그먼트들이 한꺼번에 yield 되므로, batch_size=16 이면 중간 길이 영상도
+배치 1개로 처리돼 STT 끝까지 진행률이 0%로 멈춰 있다가 끝에 확 차버린다(진행바 세분화
+요구사항과 충돌). batch_size 4 는 16 대비 RTF 손해가 ~12%뿐이라(0.033 → 0.037) 진행바
+반응성과 속도를 함께 챙긴다(_CPU_BATCH_SIZE_CAP 참고).
 """
 
 from __future__ import annotations
@@ -12,9 +26,15 @@ import glob
 import os
 import sys
 import sysconfig
+from collections.abc import Callable
 from pathlib import Path
 
 from ..models import Segment
+
+# 세그먼트가 도착할 때마다 (완료된 오디오 초, 전체 오디오 초)를 알리는 콜백.
+# 배치 모드에서도 faster-whisper 는 배치 단위로 세그먼트를 점진적으로 yield 하므로
+# (전체를 다 처리한 뒤 한 번에 반환하지 않음) 이 콜백으로 세부 진행률을 낼 수 있다.
+ProgressCB = Callable[[float, float], None]
 
 _model_cache: dict[tuple, object] = {}
 _cuda_dlls_registered = False
@@ -29,6 +49,15 @@ _AUTO_MODEL = {"cuda": "large-v3", "cpu": "small"}
 # 스래싱 없이 돌게 한다. VRAM 이 넉넉한 GPU 라면 이 상한을 올려 처리량을 더 얻을 수 있다.
 _MAX_BATCH_BY_MODEL = {"large-v3": 4, "large-v2": 4, "large": 4}
 
+# CPU 배치 추론은 배치 하나가 통째로 끝나야 그 안의 세그먼트들이 한꺼번에 yield 된다
+# (faster-whisper 가 배치 단위로만 진행 상황을 내보냄). batch_size 를 그대로 16 으로 두면
+# 중간 길이 영상까지도 VAD 청크가 통째로 배치 1개에 들어가버려, STT 가 끝날 때까지
+# 진행률이 0%로 멈춰 있다가 끝에 한 번에 확 차버리는 문제가 실측 확인됐다(10분 오디오
+# 전체가 배치 1개로 처리됨 — progress 콜백 14개가 전부 같은 순간에 발생). CPU 처리 속도
+# 자체는 batch_size 4 나 16 이나 거의 같으므로(실측 RTF 0.037 vs 0.033, ~12% 차이) 작게
+# 잡아 진행바가 자주(배치마다) 갱신되게 한다.
+_CPU_BATCH_SIZE_CAP = 4
+
 
 def _resolve_model(model: str, device: str) -> str:
     """model="auto" 를 장치별 기본 모델로 확정한다. 명시 모델명은 그대로 존중한다."""
@@ -37,9 +66,15 @@ def _resolve_model(model: str, device: str) -> str:
     return model
 
 
-def _effective_batch_size(model: str, batch_size: int) -> int:
-    """모델별 VRAM 안전 상한을 적용한 실효 batch_size. 상한이 없는 모델은 그대로 둔다."""
+def _effective_batch_size(model: str, device: str, batch_size: int) -> int:
+    """모델·장치별 상한을 적용한 실효 batch_size.
+
+    GPU 큰 모델은 VRAM 스래싱 방지 상한을, CPU 는 진행률 콜백이 자주 나오게 하는 상한을
+    적용하고(둘 다 해당하면 더 낮은 쪽) 상한이 없으면 요청값 그대로 쓴다.
+    """
     cap = _MAX_BATCH_BY_MODEL.get(model)
+    if device == "cpu":
+        cap = _CPU_BATCH_SIZE_CAP if cap is None else min(cap, _CPU_BATCH_SIZE_CAP)
     return min(batch_size, cap) if cap else batch_size
 
 
@@ -112,13 +147,24 @@ def _get_model(model: str, device: str, compute_type: str):
 
 
 def _run(
-    model, audio_path: Path, language: str, cfg, *, batched: bool = False, batch_size: int = 16
+    model,
+    audio_path: Path,
+    language: str,
+    cfg,
+    *,
+    batched: bool = False,
+    batch_size: int = 16,
+    on_progress: ProgressCB | None = None,
 ) -> list[Segment]:
     """실제 추론. 세그먼트 제너레이터를 소비하며, 여기서 CUDA 오류가 표면화된다.
 
-    batched 면 faster-whisper 의 BatchedInferencePipeline 로 감싸 GPU 처리량을 크게
-    올린다(large-v3 순차 대비 실측 ~2배). 배치는 VAD 청크를 묶어 처리하므로 세그먼트가
+    batched 면 faster-whisper 의 BatchedInferencePipeline 로 감싸 처리량을 크게 올린다
+    (GPU large-v3 순차 대비 ~2배, CPU small 순차 대비 실측 ~2.6배 — RTF 0.109 → 0.041,
+    8코어/16스레드 CPU·5분 클립 기준). 배치는 VAD 청크를 묶어 처리하므로 세그먼트가
     거칠어질 수 있으나(타임스탬프 정밀도↓), 텍스트 내용은 보존된다.
+
+    ``on_progress`` 는 세그먼트가 도착할 때마다(배치 모드면 배치 단위로) 호출되어
+    (완료 초, 전체 초)를 알린다 — GUI 프로그레스바를 세밀하게 갱신하는 데 쓴다.
     """
     engine = model
     kwargs = dict(language=language, vad_filter=True, word_timestamps=cfg.word_timestamps)
@@ -127,26 +173,39 @@ def _run(
 
         engine = BatchedInferencePipeline(model)
         kwargs["batch_size"] = batch_size
-    segments_iter, _info = engine.transcribe(str(audio_path), **kwargs)
-    return [
-        Segment(start=s.start, end=s.end, text=s.text.strip())
-        for s in segments_iter
-        if s.text.strip()
-    ]
+    segments_iter, info = engine.transcribe(str(audio_path), **kwargs)
+    duration = info.duration
+    result: list[Segment] = []
+    for s in segments_iter:
+        if on_progress is not None and duration:
+            on_progress(min(s.end, duration), duration)
+        if s.text.strip():
+            result.append(Segment(start=s.start, end=s.end, text=s.text.strip()))
+    return result
 
 
-def transcribe(audio_path: Path, language: str, cfg, *, log=print) -> list[Segment]:
+def transcribe(
+    audio_path: Path,
+    language: str,
+    cfg,
+    *,
+    log=print,
+    on_progress: ProgressCB | None = None,
+) -> list[Segment]:
     """오디오를 트랜스크립트로 변환한다.
 
-    model="auto" 는 장치별 기본 모델로 확정하고(GPU:large-v3 / CPU:small), GPU 에서는
-    배치 추론으로 가속한다. GPU 추론이 실패하면(cuBLAS 미설치 등) 조용히 넘어가지 않고
-    ``log`` 로 분명히 알린 뒤 CPU 로 폴백한다(그래야 사용자가 '왜 느린지'를 안다).
+    model="auto" 는 장치별 기본 모델로 확정하고(GPU:large-v3 / CPU:small), GPU·CPU 모두
+    배치 추론으로 가속한다(cfg.batched). GPU 추론이 실패하면(cuBLAS 미설치 등) 조용히
+    넘어가지 않고 ``log`` 로 분명히 알린 뒤 CPU 로 폴백한다(그래야 사용자가 '왜 느린지'를
+    안다). ``on_progress`` 는 있으면 그대로 실제 추론까지 흘려보낸다.
     """
     device, compute_type = _resolve(cfg.device, cfg.compute_type)
     model_name = _resolve_model(cfg.model, device)
-    batched = getattr(cfg, "batched", False) and device == "cuda"
-    # 모델별 VRAM 안전 상한 적용(large-v3 는 8GB 에서 batch16 이 스래싱 → 4 로 낮춤).
-    batch_size = _effective_batch_size(model_name, getattr(cfg, "batch_size", 16))
+    batched = getattr(cfg, "batched", False)
+    requested_batch_size = getattr(cfg, "batch_size", 16)
+    # 모델·장치별 상한 적용(large-v3 는 8GB 에서 batch16 이 스래싱 → 4 로, CPU 는 진행률
+    # 콜백이 자주 나오도록 4 로 낮춤 — _effective_batch_size 주석 참고).
+    batch_size = _effective_batch_size(model_name, device, requested_batch_size)
     if cfg.model == "auto":
         log(
             f"  STT 모델 자동 선택: {model_name} (device={device}, batched={batched}, "
@@ -156,7 +215,15 @@ def transcribe(audio_path: Path, language: str, cfg, *, log=print) -> list[Segme
     # 1차: 확정된 device/compute_type
     try:
         model = _get_model(model_name, device, compute_type)
-        return _run(model, audio_path, language, cfg, batched=batched, batch_size=batch_size)
+        return _run(
+            model,
+            audio_path,
+            language,
+            cfg,
+            batched=batched,
+            batch_size=batch_size,
+            on_progress=on_progress,
+        )
     except Exception as exc:
         if device == "cpu":
             raise
@@ -176,5 +243,16 @@ def transcribe(audio_path: Path, language: str, cfg, *, log=print) -> list[Segme
     cpu_model = _resolve_model(cfg.model, "cpu")
     if cpu_model != model_name:
         log(f"  CPU 폴백 모델: {cpu_model}")
+    # batch_size 도 (GPU 모델 기준이 아니라) 실제로 돌릴 cpu_model 기준으로 다시 계산한다
+    # — 안 그러면 큰 모델의 VRAM 상한이 폴백 후에도 그대로 남는 등 엉뚱한 상한이 적용된다.
+    cpu_batch_size = _effective_batch_size(cpu_model, "cpu", requested_batch_size)
     model = _get_model(cpu_model, "cpu", "int8")
-    return _run(model, audio_path, language, cfg, batched=False, batch_size=batch_size)
+    return _run(
+        model,
+        audio_path,
+        language,
+        cfg,
+        batched=batched,
+        batch_size=cpu_batch_size,
+        on_progress=on_progress,
+    )

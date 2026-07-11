@@ -16,8 +16,12 @@ class STTConfig(BaseModel):
     compute_type: str = "auto"  # auto → GPU 는 float16, CPU 는 int8 (stage3_stt._resolve)
     # 다운스트림은 세그먼트 시각(seg.start)만 쓰므로 단어 단위 타임스탬프는 불필요 → 끄면 더 빠르다.
     word_timestamps: bool = False
-    # GPU 배치 추론(BatchedInferencePipeline)로 처리량↑. cuda 가 아니면 무시된다.
+    # 배치 추론(BatchedInferencePipeline)로 처리량↑. GPU 뿐 아니라 CPU 에서도 유의미하게
+    # 빠르다(실측 RTF 약 2.6배 개선, stage3_stt 모듈 docstring 참고).
     batched: bool = True
+    # GPU 기준 기본값. 실제 적용값은 stage3_stt._effective_batch_size 가 장치·모델별로
+    # 다시 낮춘다 — CPU 는 진행률 콜백이 자주 나오도록 4 로, VRAM 이 부족한 큰 GPU 모델도
+    # 4 로 상한을 둔다.
     batch_size: int = 16
 
 

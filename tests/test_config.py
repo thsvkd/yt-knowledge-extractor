@@ -22,7 +22,7 @@ class TestLoadConfig(unittest.TestCase):
         self.assertEqual(cfg.stt.model, "auto")
         self.assertEqual(cfg.stt.device, "auto")
         self.assertFalse(cfg.stt.word_timestamps)  # 세그먼트 시각만 쓰므로 기본 off
-        self.assertTrue(cfg.stt.batched)  # GPU 배치 추론 기본 on
+        self.assertTrue(cfg.stt.batched)  # 배치 추론 기본 on (GPU·CPU 모두)
         self.assertTrue(cfg.subtitles.use_manual)
         self.assertTrue(cfg.subtitles.use_auto_fallback)
         self.assertTrue(cfg.subtitles.stt_first)  # STT 우선이 기본
