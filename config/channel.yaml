@@ -7,17 +7,24 @@ language: ko
 
 # 3단계 STT (로컬 faster-whisper 베이스라인)
 stt:
-  model: large-v3        # tiny | base | small | medium | large-v3
+  model: auto            # auto | tiny | base | small | medium | large-v3
+                         #   auto: GPU면 large-v3(최고 품질), GPU 없으면 small 로 자동 선택
   device: auto           # auto | cuda | cpu
   compute_type: auto     # auto | int8 | int8_float16 | float16
                          #   auto: GPU면 float16, CPU면 int8 로 자동 선택(권장)
-  word_timestamps: true
+  word_timestamps: false # 다운스트림은 세그먼트 시각만 사용 → 단어 타임스탬프는 불필요(속도↑)
+  batched: true          # GPU 배치 추론(BatchedInferencePipeline)으로 가속. cuda 아니면 무시.
+  batch_size: 16         # large 계열은 8GB VRAM 스래싱 방지를 위해 내부적으로 4 로 상한 적용됨
 
-# 자막/STT 우선순위: ① 수동 자막 > ② faster-whisper STT > ③ 유튜브 자동자막
+# 트랜스크립트 우선순위: ① STT(실제 발화 받아쓰기) > ② 수동 자막 > ③ 유튜브 자동자막.
+# 유튜브 자막은 구두점이 없고 오탈자가 있으며, 간혹 '10분 영상에 한 줄'처럼 깨진 채 제공되기
+# 때문에 STT 를 1순위로 둔다. 자막은 채택 전에 완전성(커버리지·세그먼트 수)을 검증한다.
 subtitles:
-  use_manual: true         # ① 수동(크리에이터 제작) 자막이 있으면 최우선 사용
-  use_auto_fallback: true  # ③ STT 가 실패할 때만 유튜브 자동자막으로 폴백
-                           #    (구두점X·오탈자 있음. false 면 STT 실패 시 그대로 에러)
+  use_manual: true          # 수동(크리에이터) 자막을 소스 후보로 쓸지
+  use_auto_fallback: true   # 유튜브 자동자막을 소스 후보로 쓸지
+  stt_first: true           # true: STT 우선(권장). false: (검증 통과한) 수동 자막 우선
+  min_coverage_ratio: 0.5   # 자막이 영상 길이의 이 비율 미만만 커버하면 '깨진 자막'으로 보고 건너뜀
+  min_caption_segments: 2   # 자막 세그먼트가 이 미만이면(한 줄짜리) 건너뜀
 
 # 5·6단계 LLM
 llm:

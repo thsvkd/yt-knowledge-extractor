@@ -23,7 +23,7 @@ from pathlib import Path
 import flet as ft
 
 from . import __version__, token_store, updater
-from .config import Config, LLMConfig, STTConfig, load_config
+from .config import Config, LLMConfig, load_config
 from .run import Progress, PipelineResult, run_pipeline
 from .utils import load_dotenv
 
@@ -43,8 +43,9 @@ _LOG_PANEL_HEIGHT = 260
 # 상태 텍스트 렌더 틱 주기(초). 짧은 시간에 몰리는 갱신을 한 번으로 합쳐 화면이 밀리지 않게 한다.
 _UI_TICK_SECONDS = 0.15
 
-# 스크립트 변환(STT) 모델 선택지.
-_STT_MODELS = ("tiny", "base", "small", "medium", "large-v3")
+# 스크립트 변환(STT) 모델 선택지. "auto" 는 장치별 기본(GPU:large-v3 / CPU:small)으로,
+# 대부분의 사용자에게 권장되는 기본값이다.
+_STT_MODELS = ("auto", "tiny", "base", "small", "medium", "large-v3")
 # GPU 가속 선택지: (표시명, stt.device 값).
 _DEVICE_CHOICES = [("자동", "auto"), ("사용", "cuda"), ("사용 안함", "cpu")]
 # 실행 단계 선택지: (표시명, run_pipeline stage 값). 기본값은 '스크립트 추출까지'.
@@ -193,8 +194,9 @@ class PipelineGUI:
         self.language_field = ft.TextField(label="언어", value=cfg.language, width=110)
         self.stt_model_dd = ft.Dropdown(
             label="스크립트 변환 모델",
-            value=cfg.stt.model if cfg.stt.model in _STT_MODELS else "large-v3",
+            value=cfg.stt.model if cfg.stt.model in _STT_MODELS else "auto",
             width=180,
+            tooltip="auto: GPU면 large-v3(최고 품질), GPU 없으면 small 로 자동 선택",
             options=[ft.dropdown.Option(x) for x in _STT_MODELS],
         )
         _device_vals = {v for _l, v in _DEVICE_CHOICES}
@@ -677,11 +679,15 @@ class PipelineGUI:
         return Config(
             videos=self._urls(),
             language=self.language_field.value.strip() or "ko",
-            stt=STTConfig(
-                model=self.stt_model_dd.value or "large-v3",
-                device=self.stt_device_dd.value or "auto",
-                compute_type=base.stt.compute_type,
-                word_timestamps=base.stt.word_timestamps,
+            # UI 로 노출한 model/device 만 덮어쓰고, 노출하지 않는 나머지 STT 필드
+            # (compute_type/word_timestamps/batched/batch_size 등, 미래 필드 포함)는
+            # base 설정에서 그대로 계승한다(필드별 재조립 시 새 필드가 조용히 기본값으로
+            # 되돌아가는 문제를 방지).
+            stt=base.stt.model_copy(
+                update={
+                    "model": self.stt_model_dd.value or "auto",
+                    "device": self.stt_device_dd.value or "auto",
+                }
             ),
             subtitles=base.subtitles,
             llm=LLMConfig(

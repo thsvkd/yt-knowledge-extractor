@@ -47,6 +47,41 @@ def _video_id_from_url(url: str) -> str | None:
     return m.group(1) if m else None
 
 
+# --- 자막 완전성 검증 --------------------------------------------------------
+#
+# 유튜브가 제공하는 자막(수동/자동)이 간혹 깨진 채로 온다(예: 10분 영상인데 한 줄만).
+# 그런 자막을 그대로 트랜스크립트로 채택하면 실제 발화 내용을 대부분 잃는다. 그래서
+# 자막을 소스로 채택하기 전에 '영상 길이를 충분히 커버하는가 + 세그먼트가 한두 줄이
+# 아닌가'를 검사해, 미달이면 다음 소스(STT/다른 자막)로 폴백한다.
+
+
+def _caption_coverage(segs: list[Segment], duration: float) -> float:
+    """자막이 영상 길이의 얼마를 커버하는지 0~1 로 반환한다.
+
+    duration 을 모르면(0 이하) 검증할 수 없으므로 1.0(통과)으로 본다.
+    """
+    if not segs:
+        return 0.0
+    if duration and duration > 0:
+        return min(1.0, max(s.end for s in segs) / duration)
+    return 1.0
+
+
+def _caption_is_usable(
+    segs: list[Segment], duration: float, *, min_coverage: float, min_segments: int
+) -> bool:
+    """자막이 '깨지지 않고' 트랜스크립트로 쓸 만한지 판정한다.
+
+    한 줄짜리(min_segments 미만)이거나, 영상 길이의 min_coverage 미만만 커버하면
+    사용 불가로 본다. min_coverage 가 0 이면 커버리지 검사는 건너뛴다.
+    """
+    if len(segs) < min_segments:
+        return False
+    if min_coverage > 0 and _caption_coverage(segs, duration) < min_coverage:
+        return False
+    return True
+
+
 # --- 진행 이벤트 / 결과 모델 -------------------------------------------------
 
 
@@ -177,36 +212,72 @@ def build_transcript(
         segs = [Segment(**s) for s in json.loads(vp.transcript.read_text(encoding="utf-8"))]
         return vid, meta, segs
 
-    segs: list[Segment] | None = None
+    # 트랜스크립트 소스 우선순위. 기본은 STT(실제 발화 받아쓰기)를 1순위로 두고, 실패/불가
+    # 시에만 자막으로 폴백한다(cfg.subtitles.stt_first). 자막은 채택 전에 완전성을 검증해
+    # '깨진 자막'(예: 10분 영상에 한 줄)을 걸러 다음 소스로 넘긴다.
+    subs = cfg.subtitles
+    duration = float(meta.get("duration") or 0)
 
-    # ① 수동 자막 (최우선) — 기록된 언어의 파일을 정확히 지목
-    if meta.get("manual_sub_lang"):
-        sub = vp.root / f"audio.{meta['manual_sub_lang']}.vtt"
-        if sub.exists():
-            log(f"[{vid}] ① 수동 자막 사용: {sub.name}")
-            segs = stage2_subtitles.parse_vtt(sub)
-
-    # ② faster-whisper STT
-    if segs is None:
+    def _from_stt() -> list[Segment] | None:
         audio = vp.audio()
         if audio is None:
-            raise RuntimeError(f"[{vid}] 오디오 파일을 찾을 수 없습니다.")
+            log(f"[{vid}] 오디오 파일을 찾을 수 없어 STT 를 건너뜁니다.")
+            return None
         try:
-            log(f"[{vid}] ② STT 실행 (faster-whisper {cfg.stt.model})...")
-            segs = stage3_stt.transcribe(audio, cfg.language, cfg.stt)
+            log(f"[{vid}] STT 실행 (faster-whisper {cfg.stt.model})...")
+            return stage3_stt.transcribe(audio, cfg.language, cfg.stt, log=log)
         except Exception as exc:
             log(f"[{vid}] STT 실패: {type(exc).__name__}: {exc}")
+            return None
 
-    # ③ 유튜브 자동자막 (STT 실패 시 최후 폴백)
-    if segs is None and meta.get("auto_sub_lang"):
-        log(f"[{vid}] ③ 자동자막 폴백 다운로드 (lang={meta['auto_sub_lang']})...")
+    def _accept_caption(parsed: list[Segment], kind: str, name: str) -> list[Segment] | None:
+        if not _caption_is_usable(
+            parsed,
+            duration,
+            min_coverage=subs.min_coverage_ratio,
+            min_segments=subs.min_caption_segments,
+        ):
+            log(
+                f"[{vid}] {kind} 자막이 불완전(세그먼트 {len(parsed)}개, "
+                f"커버리지 {_caption_coverage(parsed, duration):.0%}) → 건너뜁니다: {name}"
+            )
+            return None
+        log(f"[{vid}] {kind} 자막 사용: {name} ({len(parsed)} 세그먼트)")
+        return parsed
+
+    def _from_manual() -> list[Segment] | None:
+        if not subs.use_manual or not meta.get("manual_sub_lang"):
+            return None
+        sub = vp.root / f"audio.{meta['manual_sub_lang']}.vtt"
+        if not sub.exists():
+            return None
+        return _accept_caption(stage2_subtitles.parse_vtt(sub), "수동", sub.name)
+
+    def _from_auto() -> list[Segment] | None:
+        if not subs.use_auto_fallback or not meta.get("auto_sub_lang"):
+            return None
+        log(f"[{vid}] 유튜브 자동자막 다운로드 (lang={meta['auto_sub_lang']})...")
         sub = stage1_ingest.download_auto_subtitle(url, vp, meta["auto_sub_lang"])
-        if sub:
-            log(f"[{vid}]    자동자막 사용: {sub.name}")
-            segs = stage2_subtitles.parse_vtt(sub, collapse_rollup=True)
+        if not sub:
+            return None
+        parsed = stage2_subtitles.parse_vtt(sub, collapse_rollup=True)
+        return _accept_caption(parsed, "자동", sub.name)
 
-    if segs is None:
-        raise RuntimeError(f"[{vid}] 트랜스크립트를 확보하지 못했습니다 (수동/STT/자동 모두 실패).")
+    sources = (
+        [_from_stt, _from_manual, _from_auto]
+        if subs.stt_first
+        else [_from_manual, _from_stt, _from_auto]
+    )
+    segs: list[Segment] | None = None
+    for source in sources:
+        segs = source()
+        if segs:
+            break
+
+    if not segs:
+        raise RuntimeError(
+            f"[{vid}] 트랜스크립트를 확보하지 못했습니다 (STT·수동·자동 자막 모두 실패하거나 불완전)."
+        )
 
     segs = stage4_clean.clean_segments(segs)
     vp.transcript.write_text(
@@ -417,6 +488,15 @@ def run_pipeline(
 
 
 def main() -> None:
+    # cp949 콘솔로 리다이렉트된 CLI 에서 인코딩 불가 문자(이모지 등)로 진행 로그 print 가
+    # 죽지 않도록 대체 출력으로 바꾼다(한글은 cp949 로 그대로 나가고, 불가 문자만 대체).
+    import sys
+
+    try:
+        sys.stdout.reconfigure(errors="replace")
+    except Exception:
+        pass
+
     load_dotenv()  # .env 의 CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY 를 환경변수로
 
     ap = argparse.ArgumentParser(description="유튜브 채널 지식 문서화 PoC")

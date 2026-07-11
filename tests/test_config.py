@@ -19,10 +19,13 @@ class TestLoadConfig(unittest.TestCase):
         cfg = load_config(self._write('videos: ["https://youtu.be/x"]\n'))
         self.assertEqual(cfg.videos, ["https://youtu.be/x"])
         self.assertEqual(cfg.language, "ko")
-        self.assertEqual(cfg.stt.model, "large-v3")
+        self.assertEqual(cfg.stt.model, "auto")
         self.assertEqual(cfg.stt.device, "auto")
+        self.assertFalse(cfg.stt.word_timestamps)  # 세그먼트 시각만 쓰므로 기본 off
+        self.assertTrue(cfg.stt.batched)  # GPU 배치 추론 기본 on
         self.assertTrue(cfg.subtitles.use_manual)
         self.assertTrue(cfg.subtitles.use_auto_fallback)
+        self.assertTrue(cfg.subtitles.stt_first)  # STT 우선이 기본
         self.assertEqual(cfg.llm.model, "claude-opus-4-8")
 
     def test_partial_override_keeps_other_defaults(self):

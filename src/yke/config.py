@@ -9,15 +9,30 @@ from pydantic import BaseModel
 
 
 class STTConfig(BaseModel):
-    model: str = "large-v3"
+    # auto → 장치별 기본(GPU:large-v3 / CPU:small, stage3_stt._resolve_model).
+    # 명시하려면 tiny|base|small|medium|large-v3.
+    model: str = "auto"
     device: str = "auto"
     compute_type: str = "auto"  # auto → GPU 는 float16, CPU 는 int8 (stage3_stt._resolve)
-    word_timestamps: bool = True
+    # 다운스트림은 세그먼트 시각(seg.start)만 쓰므로 단어 단위 타임스탬프는 불필요 → 끄면 더 빠르다.
+    word_timestamps: bool = False
+    # GPU 배치 추론(BatchedInferencePipeline)로 처리량↑. cuda 가 아니면 무시된다.
+    batched: bool = True
+    batch_size: int = 16
 
 
 class SubtitlesConfig(BaseModel):
-    use_manual: bool = True  # ① 수동(크리에이터) 자막이 있으면 최우선 사용
-    use_auto_fallback: bool = True  # ③ STT 실패 시 최후 폴백으로 유튜브 자동자막 사용
+    use_manual: bool = True  # 수동(크리에이터) 자막을 소스 후보로 쓸지
+    use_auto_fallback: bool = True  # 유튜브 자동자막을 소스 후보로 쓸지
+    # 스크립트 품질 우선: STT(실제 음성 받아쓰기)를 1순위로, 자막은 폴백으로 둔다.
+    # 유튜브 자막은 구두점이 없고 오탈자가 있으며, 간혹 '10분 영상에 한 줄'처럼 깨진
+    # 채로 제공되기 때문이다. False 로 두면 (검증 통과한) 수동 자막을 STT 보다 우선한다.
+    stt_first: bool = True
+    # 자막 완전성 게이트: 자막이 영상 길이의 이 비율 미만만 커버하면 '깨진 자막'으로 보고
+    # 건너뛴다(다음 소스로 폴백). 0 이면 커버리지 검사 비활성.
+    min_coverage_ratio: float = 0.5
+    # 자막 세그먼트가 이 개수 미만이면(예: 한 줄짜리) '깨진 자막'으로 보고 건너뛴다.
+    min_caption_segments: int = 2
 
 
 class LLMConfig(BaseModel):
