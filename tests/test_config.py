@@ -25,7 +25,7 @@ class TestLoadConfig(unittest.TestCase):
         self.assertTrue(cfg.stt.batched)  # 배치 추론 기본 on (GPU·CPU 모두)
         self.assertTrue(cfg.subtitles.use_manual)
         self.assertTrue(cfg.subtitles.use_auto_fallback)
-        self.assertTrue(cfg.subtitles.stt_first)  # STT 우선이 기본
+        self.assertFalse(cfg.subtitles.stt_first)  # 수동 자막(업로더 제공) 우선이 기본
         self.assertEqual(cfg.llm.model, "claude-opus-4-8")
 
     def test_partial_override_keeps_other_defaults(self):

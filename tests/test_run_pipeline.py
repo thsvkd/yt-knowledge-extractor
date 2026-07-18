@@ -248,7 +248,7 @@ class TestCaptionValidation(unittest.TestCase):
 
 
 class TestBuildTranscriptPriority(unittest.TestCase):
-    """build_transcript 의 소스 우선순위(STT 우선)와 깨진 자막 폴백 검증."""
+    """build_transcript 의 소스 우선순위(수동 자막 우선, 깨진 자막만 예외적으로 STT 폴백) 검증."""
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -284,20 +284,25 @@ class TestBuildTranscriptPriority(unittest.TestCase):
         ):
             yield
 
-    def test_stt_first_uses_stt_and_skips_captions(self):
+    def test_default_prefers_valid_manual_caption_over_stt(self):
+        # 기본(stt_first=False)은 업로더 제공 자막이 멀쩡하면 STT 를 아예 돌리지 않는다.
         meta = self._meta(manual_sub_lang="ko", auto_sub_lang="ko")
 
         def stt(audio, lang, cfg, log=print, on_progress=None):
-            return [Segment(start=0, end=580, text="STT 받아쓰기 결과")]
+            raise AssertionError("유효한 수동 자막이 있으면 STT 는 호출되지 않아야 함")
 
-        parse = mock.Mock(return_value=[Segment(start=0, end=600, text="수동 자막")])
+        parse = mock.Mock(
+            return_value=[
+                Segment(start=0, end=300, text="앞부분 내용"),
+                Segment(start=300, end=600, text="뒷부분 내용"),
+            ]
+        )
         with self._patched(meta, stt, parse):
             _vid, _m, segs = run.build_transcript("testvid", self._cfg(), self.data, False)
-        self.assertEqual([s.text for s in segs], ["STT 받아쓰기 결과"])
-        parse.assert_not_called()  # STT 성공 → 자막은 건드리지 않음
+        self.assertEqual([s.text for s in segs], ["앞부분 내용", "뒷부분 내용"])
 
-    def test_broken_manual_caption_falls_through(self):
-        # stt_first=False 로 수동 자막을 먼저 시도하지만, 한 줄짜리라 STT 로 폴백.
+    def test_broken_manual_caption_falls_through_to_stt(self):
+        # 기본(stt_first=False)으로 수동 자막을 먼저 시도하지만, 한 줄짜리라 STT 로 폴백.
         meta = self._meta(manual_sub_lang="ko")
 
         def stt(audio, lang, cfg, log=print, on_progress=None):
@@ -305,13 +310,26 @@ class TestBuildTranscriptPriority(unittest.TestCase):
 
         parse = mock.Mock(return_value=[Segment(start=0, end=5, text="한 줄짜리 깨진 자막")])
         with self._patched(meta, stt, parse):
-            _vid, _m, segs = run.build_transcript(
-                "testvid", self._cfg(stt_first=False), self.data, False
-            )
+            _vid, _m, segs = run.build_transcript("testvid", self._cfg(), self.data, False)
         parse.assert_called()  # 수동 자막을 시도는 했고
-        self.assertEqual([s.text for s in segs], ["STT 받아쓰기 결과"])  # 깨져서 STT 채택
+        self.assertEqual([s.text for s in segs], ["STT 받아쓰기 결과"])  # 깨져서 STT 로 예외 폴백
 
-    def test_stt_failure_falls_back_to_valid_manual(self):
+    def test_explicit_stt_first_uses_stt_and_skips_captions(self):
+        # stt_first=True 로 명시하면(레거시 옵션) 여전히 STT 를 1순위로 쓸 수 있다.
+        meta = self._meta(manual_sub_lang="ko", auto_sub_lang="ko")
+
+        def stt(audio, lang, cfg, log=print, on_progress=None):
+            return [Segment(start=0, end=580, text="STT 받아쓰기 결과")]
+
+        parse = mock.Mock(return_value=[Segment(start=0, end=600, text="수동 자막")])
+        with self._patched(meta, stt, parse):
+            _vid, _m, segs = run.build_transcript(
+                "testvid", self._cfg(stt_first=True), self.data, False
+            )
+        self.assertEqual([s.text for s in segs], ["STT 받아쓰기 결과"])
+        parse.assert_not_called()  # STT 성공 → 자막은 건드리지 않음
+
+    def test_explicit_stt_first_failure_falls_back_to_valid_manual(self):
         meta = self._meta(manual_sub_lang="ko")
 
         def stt(audio, lang, cfg, log=print, on_progress=None):
@@ -324,7 +342,9 @@ class TestBuildTranscriptPriority(unittest.TestCase):
             ]
         )
         with self._patched(meta, stt, parse):
-            _vid, _m, segs = run.build_transcript("testvid", self._cfg(), self.data, False)
+            _vid, _m, segs = run.build_transcript(
+                "testvid", self._cfg(stt_first=True), self.data, False
+            )
         self.assertEqual([s.text for s in segs], ["앞부분 내용", "뒷부분 내용"])
 
 

@@ -263,15 +263,16 @@ def build_transcript(
     info = stage1_ingest.probe(url)
     vid = info["id"]
     vp = VideoPaths(data_dir, vid)
-    meta = stage1_ingest.ingest(url, info, vp, cfg.language, cfg.subtitles, force)
+    meta = stage1_ingest.ingest(url, info, vp, cfg.language, cfg.subtitles, force, log=log)
 
     if vp.transcript.exists() and not force:
         segs = [Segment(**s) for s in json.loads(vp.transcript.read_text(encoding="utf-8"))]
         return vid, meta, segs
 
-    # 트랜스크립트 소스 우선순위. 기본은 STT(실제 발화 받아쓰기)를 1순위로 두고, 실패/불가
-    # 시에만 자막으로 폴백한다(cfg.subtitles.stt_first). 자막은 채택 전에 완전성을 검증해
-    # '깨진 자막'(예: 10분 영상에 한 줄)을 걸러 다음 소스로 넘긴다.
+    # 트랜스크립트 소스 우선순위. 기본은 유튜브 + 업로더 제공 자막(수동 자막)을 1순위로 두고,
+    # 그 자막이 깨져 있을 때만 예외적으로 STT(AI 모델)로 폴백한다(cfg.subtitles.stt_first=False
+    # 가 기본). 자막은 채택 전에 완전성을 검증해 '깨진 자막'(예: 10분 영상에 한 줄)을 걸러
+    # 다음 소스로 넘긴다.
     subs = cfg.subtitles
     duration = float(meta.get("duration") or 0)
 
@@ -316,7 +317,7 @@ def build_transcript(
         if not subs.use_auto_fallback or not meta.get("auto_sub_lang"):
             return None
         log(f"[{vid}] 유튜브 자동자막 다운로드 (lang={meta['auto_sub_lang']})...")
-        sub = stage1_ingest.download_auto_subtitle(url, vp, meta["auto_sub_lang"])
+        sub = stage1_ingest.download_auto_subtitle(url, vp, meta["auto_sub_lang"], log=log)
         if not sub:
             return None
         parsed = stage2_subtitles.parse_vtt(sub, collapse_rollup=True)

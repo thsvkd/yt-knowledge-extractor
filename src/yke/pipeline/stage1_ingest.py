@@ -12,6 +12,8 @@
 from __future__ import annotations
 
 import json
+import time
+from collections.abc import Callable
 from urllib.parse import urlsplit, urlunsplit
 
 import yt_dlp
@@ -24,6 +26,56 @@ try:  # ffmpeg 가 있으면 후처리 견고성 향상 (필수는 아님)
     _FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 except Exception:  # pragma: no cover
     _FFMPEG = None
+
+
+# --- 일시적 다운로드 오류 재시도 --------------------------------------------
+#
+# 유튜브는 서명(URL) 만료나 순간 스로틀링으로 간헐적 403/429/5xx 를 내는 경우가 흔하다
+# (동일 URL 이 몇 초 뒤 재시도에 바로 성공하는 것으로 재현 확인됨). '삭제됨'·'비공개'·
+# 'DRM 보호' 처럼 재시도해도 절대 풀리지 않는 오류까지 반복하면 시간만 낭비하므로,
+# 메시지에 일시적 오류로 보이는 마커가 있을 때만 짧은 backoff 후 재시도한다.
+
+_DOWNLOAD_MAX_ATTEMPTS = 3
+_DOWNLOAD_RETRY_BACKOFF_S = 3.0
+
+_RETRYABLE_MARKERS = (
+    "403",
+    "forbidden",
+    "429",
+    "too many requests",
+    "500",
+    "502",
+    "503",
+    "504",
+    "timed out",
+    "timeout",
+    "connection reset",
+    "temporary failure",
+    "econnreset",
+)
+
+
+def _is_retryable_download_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(marker in msg for marker in _RETRYABLE_MARKERS)
+
+
+def _download(opts: dict, url: str, *, log: Callable[[str], None] = print) -> dict:
+    """``yt_dlp`` 다운로드를 실행하고, 일시적 오류는 짧게 재시도한다."""
+    for attempt in range(1, _DOWNLOAD_MAX_ATTEMPTS + 1):
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(url, download=True)
+        except yt_dlp.utils.DownloadError as exc:
+            if attempt >= _DOWNLOAD_MAX_ATTEMPTS or not _is_retryable_download_error(exc):
+                raise
+            wait = _DOWNLOAD_RETRY_BACKOFF_S * attempt
+            log(
+                f"  다운로드 실패({type(exc).__name__}: {exc}) → {wait:.0f}초 후 재시도 "
+                f"({attempt}/{_DOWNLOAD_MAX_ATTEMPTS})..."
+            )
+            time.sleep(wait)
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def probe(url: str) -> dict:
@@ -106,7 +158,16 @@ def _pick_lang(table: dict | None, language: str) -> str | None:
     return sorted(cands, key=len)[0] if cands else None
 
 
-def ingest(url, info: dict, vpaths: VideoPaths, language: str, subtitles_cfg, force: bool = False) -> dict:
+def ingest(
+    url,
+    info: dict,
+    vpaths: VideoPaths,
+    language: str,
+    subtitles_cfg,
+    force: bool = False,
+    *,
+    log: Callable[[str], None] = print,
+) -> dict:
     """오디오와 (있으면) 수동 자막을 내려받고 meta.json 을 반환한다.
 
     자동자막은 여기서 받지 않는다 — STT 실패 시의 최후 폴백이므로 가용성만 기록한다.
@@ -135,8 +196,7 @@ def ingest(url, info: dict, vpaths: VideoPaths, language: str, subtitles_cfg, fo
     if _FFMPEG:
         opts["ffmpeg_location"] = _FFMPEG
 
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        dl = ydl.extract_info(url, download=True)
+    dl = _download(opts, url, log=log)
 
     meta = {
         "id": dl["id"],
@@ -154,7 +214,9 @@ def ingest(url, info: dict, vpaths: VideoPaths, language: str, subtitles_cfg, fo
     return meta
 
 
-def download_auto_subtitle(url: str, vpaths: VideoPaths, lang: str) -> "object | None":
+def download_auto_subtitle(
+    url: str, vpaths: VideoPaths, lang: str, *, log: Callable[[str], None] = print
+) -> "object | None":
     """STT 실패 시 최후 폴백: 유튜브 자동자막만 내려받는다 (오디오 재다운로드 없음)."""
     from pathlib import Path
 
@@ -169,8 +231,7 @@ def download_auto_subtitle(url: str, vpaths: VideoPaths, lang: str) -> "object |
         "no_warnings": True,
         "noprogress": True,
     }
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.extract_info(url, download=True)
+    _download(opts, url, log=log)
     exact = Path(vpaths.root) / f"audio.{lang}.vtt"
     if exact.exists():
         return exact

@@ -28,10 +28,10 @@ class STTConfig(BaseModel):
 class SubtitlesConfig(BaseModel):
     use_manual: bool = True  # 수동(크리에이터) 자막을 소스 후보로 쓸지
     use_auto_fallback: bool = True  # 유튜브 자동자막을 소스 후보로 쓸지
-    # 스크립트 품질 우선: STT(실제 음성 받아쓰기)를 1순위로, 자막은 폴백으로 둔다.
-    # 유튜브 자막은 구두점이 없고 오탈자가 있으며, 간혹 '10분 영상에 한 줄'처럼 깨진
-    # 채로 제공되기 때문이다. False 로 두면 (검증 통과한) 수동 자막을 STT 보다 우선한다.
-    stt_first: bool = True
+    # 소스 우선순위(합의): 유튜브 + 업로더 제공 자막(수동 자막)을 1순위로 삼는다.
+    # 단, 그 자막이 깨져 있으면(예: 10분 영상에 한 줄, 커버리지 미달 — _caption_is_usable
+    # 참고) 예외적으로만 STT(AI 모델)로 폴백한다. True 로 두면 반대로 STT 를 1순위로 쓴다.
+    stt_first: bool = False
     # 자막 완전성 게이트: 자막이 영상 길이의 이 비율 미만만 커버하면 '깨진 자막'으로 보고
     # 건너뛴다(다음 소스로 폴백). 0 이면 커버리지 검사 비활성.
     min_coverage_ratio: float = 0.5
