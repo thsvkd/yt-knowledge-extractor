@@ -14,13 +14,14 @@ from unittest import mock
 from yke import run
 from yke.config import Config
 from yke.models import KnowledgeUnit, Segment
+from yke.utils import StoppedError
 
 
 def _seg() -> list[Segment]:
     return [Segment(start=0.0, end=1.0, text="hi")]
 
 
-def _fake_bt(url, cfg, data_dir, force, *, log=print, on_stt_progress=None):
+def _fake_bt(url, cfg, data_dir, force, *, log=print, on_stt_progress=None, should_stop=None):
     vid = "v_" + url
     return vid, {"id": vid, "title": url}, _seg()
 
@@ -60,7 +61,7 @@ class TestRunPipeline(unittest.TestCase):
     def test_stt_sub_progress_reported_and_transient(self) -> None:
         # STT 세부 진행(초 단위)이 combined sub_progress 로 변환되어 흘러가는지,
         # 그리고 스피너/바 전용(transient)이라 영속 로그에는 안 남는지 확인한다.
-        def bt(url, cfg, data_dir, force, *, log=print, on_stt_progress=None):
+        def bt(url, cfg, data_dir, force, *, log=print, on_stt_progress=None, should_stop=None):
             if on_stt_progress:
                 on_stt_progress(30.0, 100.0)
                 on_stt_progress(100.0, 100.0)
@@ -76,7 +77,7 @@ class TestRunPipeline(unittest.TestCase):
         self.assertTrue(all(e.transient for e in sub_events))
 
     def test_failure_is_isolated(self) -> None:
-        def bt(url, cfg, data_dir, force, *, log=print, on_stt_progress=None):
+        def bt(url, cfg, data_dir, force, *, log=print, on_stt_progress=None, should_stop=None):
             if url == "bad":
                 raise RuntimeError("boom")
             return "v_ok", {"id": "v_ok"}, _seg()
@@ -95,10 +96,32 @@ class TestRunPipeline(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 run.run_pipeline(["a"], self.cfg, stage="transcript")
 
+    def test_stopped_error_mid_video_stt_is_not_a_failure(self) -> None:
+        # 진행 중이던 영상의 STT 자체가 should_stop 을 감지해 StoppedError 를 던진 경우 —
+        # (다음 영상 경계를 기다리지 않고) 즉시 멈추되, failures 목록에는 넣지 않는다.
+        def bt(url, cfg, data_dir, force, *, log=print, on_stt_progress=None, should_stop=None):
+            if url == "slow":
+                raise StoppedError("stt stopped mid video")
+            return "v_" + url, {"id": "v_" + url}, _seg()
+
+        events: list[run.Progress] = []
+        with mock.patch.object(run, "build_transcript", side_effect=bt):
+            res = run.run_pipeline(
+                ["slow", "never-reached"],
+                self.cfg,
+                stage="transcript",
+                on_progress=events.append,
+                should_stop=lambda: False,  # STT 내부에서만 감지된 상황을 흉내
+            )
+        self.assertTrue(res.stopped)
+        self.assertEqual(res.failures, [])
+        self.assertEqual(res.video_count, 0)
+        self.assertFalse(any(e.level == "error" for e in events))
+
     def test_stop_between_videos(self) -> None:
         processed = {"n": 0}
 
-        def bt(url, cfg, data_dir, force, *, log=print, on_stt_progress=None):
+        def bt(url, cfg, data_dir, force, *, log=print, on_stt_progress=None, should_stop=None):
             processed["n"] += 1
             return "v_" + url, {"id": "v_" + url}, _seg()
 
@@ -288,7 +311,7 @@ class TestBuildTranscriptPriority(unittest.TestCase):
         # 기본(stt_first=False)은 업로더 제공 자막이 멀쩡하면 STT 를 아예 돌리지 않는다.
         meta = self._meta(manual_sub_lang="ko", auto_sub_lang="ko")
 
-        def stt(audio, lang, cfg, log=print, on_progress=None):
+        def stt(audio, lang, cfg, log=print, on_progress=None, should_stop=None):
             raise AssertionError("유효한 수동 자막이 있으면 STT 는 호출되지 않아야 함")
 
         parse = mock.Mock(
@@ -305,7 +328,7 @@ class TestBuildTranscriptPriority(unittest.TestCase):
         # 기본(stt_first=False)으로 수동 자막을 먼저 시도하지만, 한 줄짜리라 STT 로 폴백.
         meta = self._meta(manual_sub_lang="ko")
 
-        def stt(audio, lang, cfg, log=print, on_progress=None):
+        def stt(audio, lang, cfg, log=print, on_progress=None, should_stop=None):
             return [Segment(start=0, end=580, text="STT 받아쓰기 결과")]
 
         parse = mock.Mock(return_value=[Segment(start=0, end=5, text="한 줄짜리 깨진 자막")])
@@ -318,7 +341,7 @@ class TestBuildTranscriptPriority(unittest.TestCase):
         # stt_first=True 로 명시하면(레거시 옵션) 여전히 STT 를 1순위로 쓸 수 있다.
         meta = self._meta(manual_sub_lang="ko", auto_sub_lang="ko")
 
-        def stt(audio, lang, cfg, log=print, on_progress=None):
+        def stt(audio, lang, cfg, log=print, on_progress=None, should_stop=None):
             return [Segment(start=0, end=580, text="STT 받아쓰기 결과")]
 
         parse = mock.Mock(return_value=[Segment(start=0, end=600, text="수동 자막")])
@@ -332,7 +355,7 @@ class TestBuildTranscriptPriority(unittest.TestCase):
     def test_explicit_stt_first_failure_falls_back_to_valid_manual(self):
         meta = self._meta(manual_sub_lang="ko")
 
-        def stt(audio, lang, cfg, log=print, on_progress=None):
+        def stt(audio, lang, cfg, log=print, on_progress=None, should_stop=None):
             raise RuntimeError("stt boom")
 
         parse = mock.Mock(

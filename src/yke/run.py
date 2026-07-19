@@ -13,8 +13,9 @@
 
 오케스트레이션은 :func:`run_pipeline` 하나로 모아 CLI(:func:`main`)와 GUI(gui.py)가
 같은 코어를 공유한다. 진행 상황은 :class:`Progress` 이벤트를 콜백으로 흘려 보내고,
-취소는 ``should_stop`` 콜러블로 영상/단계 경계에서 협조적으로 처리한다(진행 중인
-단일 영상의 STT·LLM 호출은 중간에 끊지 않고 다음 경계에서 멈춘다).
+취소는 ``should_stop`` 콜러블로 처리한다. STT 는 세그먼트/청크 단위로 확인해 진행 중인
+영상 하나의 STT 도중에도 즉시 멈추고(:class:`~.utils.StoppedError`, stage3_stt 참고),
+LLM 호출은 API 응답을 기다리는 짧은 단일 요청이라 영상/단계 경계에서만 확인한다.
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ from .pipeline import (
     stage5_extract,
     stage6_integrate,
 )
-from .utils import is_channel_or_playlist_url
+from .utils import StoppedError, is_channel_or_playlist_url
 
 _YT_ID = re.compile(r"(?:v=|youtu\.be/|/shorts/|/embed/)([\w-]{11})")
 
@@ -244,12 +245,15 @@ def build_transcript(
     *,
     log: Callable[[str], None] = print,
     on_stt_progress: stage3_stt.ProgressCB | None = None,
+    should_stop: Callable[[], bool] = lambda: False,
 ):
     """1~4단계: 영상 하나의 트랜스크립트를 생성/로딩한다.
 
     ``log`` 로 진행 메시지를 흘려 CLI 는 stdout 에, GUI 는 로그 뷰에 보이게 한다.
     ``on_stt_progress`` 는 STT 가 실제로 돌 때만(자막 채택 시엔 호출되지 않음) 세그먼트
     단위로 (완료 초, 전체 초)를 알려 GUI 진행바를 세밀하게 갱신할 수 있게 한다.
+    ``should_stop`` 은 STT 에 그대로 전달되어 세그먼트/청크 단위로 확인되며, True 가 되면
+    이 영상의 STT 가 끝나길 기다리지 않고 :class:`StoppedError` 로 즉시 전파된다.
     """
     # 완전 캐시된 경우 URL 에서 id 를 뽑아 네트워크 조회 없이 로딩(오프라인 재실행 가능)
     cached_id = _video_id_from_url(url)
@@ -282,10 +286,21 @@ def build_transcript(
             log(f"[{vid}] 오디오 파일을 찾을 수 없어 STT 를 건너뜁니다.")
             return None
         try:
-            log(f"[{vid}] STT 실행 (faster-whisper {cfg.stt.model})...")
+            engine = cfg.stt.engine
+            engine_desc = cfg.stt.model if engine == "faster-whisper" else f"vosk/{cfg.stt.vosk_model_size}"
+            log(f"[{vid}] STT 실행 ({engine} {engine_desc})...")
             return stage3_stt.transcribe(
-                audio, cfg.language, cfg.stt, log=log, on_progress=on_stt_progress
+                audio,
+                cfg.language,
+                cfg.stt,
+                log=log,
+                on_progress=on_stt_progress,
+                should_stop=should_stop,
             )
+        except StoppedError:
+            # 중단 요청은 STT 실패가 아니므로 다음 소스(수동/자동 자막)로 넘기지 않고
+            # build_transcript 호출자(run_pipeline)까지 그대로 전파한다.
+            raise
         except Exception as exc:
             log(f"[{vid}] STT 실패: {type(exc).__name__}: {exc}")
             return None
@@ -407,7 +422,14 @@ def run_pipeline(
                 force,
                 log=lambda m: on_progress(Progress(message=m, phase="transcript")),
                 on_stt_progress=_make_stt_progress_reporter(on_progress, i, total, url),
+                should_stop=should_stop,
             )
+        except StoppedError:
+            # 이 영상의 STT 도중 중단 요청을 감지했다 — 실패로 기록하지 않고 즉시 멈춘다.
+            on_progress(
+                Progress(message=f"[{url}] 중단 요청으로 STT 를 멈췄습니다.", level="warning", phase="transcript")
+            )
+            return PipelineResult(video_count=len(transcripts), failures=failures, stopped=True)
         except Exception as exc:  # 한 영상 실패가 배치 전체를 막지 않도록
             on_progress(
                 Progress(
@@ -442,6 +464,11 @@ def run_pipeline(
         if failures and not videos:
             raise RuntimeError(f"처리할 영상이 없습니다 (채널/재생목록 분석 실패: {failures}).")
         raise RuntimeError("처리된 영상이 없습니다 (모든 영상 실패).")
+
+    if should_stop():
+        return PipelineResult(
+            video_count=len(transcripts), failures=failures, stopped=True
+        )
 
     if stage == "transcript":
         on_progress(

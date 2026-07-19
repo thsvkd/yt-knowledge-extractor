@@ -9,8 +9,13 @@ from pydantic import BaseModel
 
 
 class STTConfig(BaseModel):
+    # faster-whisper(AI, 기본, 정확도 높음) | vosk(경량 오프라인 엔진, non-AI 옵션 — Kaldi
+    # 기반, 완전 오프라인·초경량이지만 정확도는 faster-whisper 보다 낮다). 자막이 깨져
+    # STT 로 폴백할 때 어느 엔진을 쓸지 고른다. vosk 는 `uv sync --extra vosk` 로 설치해야
+    # 쓸 수 있다(stage3_stt_vosk 모듈 참고).
+    engine: str = "faster-whisper"
     # auto → 장치별 기본(GPU:large-v3 / CPU:small, stage3_stt._resolve_model).
-    # 명시하려면 tiny|base|small|medium|large-v3.
+    # 명시하려면 tiny|base|small|medium|large-v3. (engine: faster-whisper 전용)
     model: str = "auto"
     device: str = "auto"
     compute_type: str = "auto"  # auto → GPU 는 float16, CPU 는 int8 (stage3_stt._resolve)
@@ -23,6 +28,14 @@ class STTConfig(BaseModel):
     # 다시 낮춘다 — CPU 는 진행률 콜백이 자주 나오도록 4 로, VRAM 이 부족한 큰 GPU 모델도
     # 4 로 상한을 둔다.
     batch_size: int = 16
+    # CPU 추론 스레드 수. 0(기본) 이면 물리 코어 수를 자동 감지(psutil)해 적용한다(실측
+    # RTF 0.041→0.037, ~10%↑ — stage3_stt 모듈 docstring 참고). 하이퍼스레딩 논리 코어
+    # 수(os.cpu_count())를 그대로 쓰면 스레드 경합으로 오히려 느려지므로, 명시값을 넣을
+    # 땐 물리 코어 수를 권장한다. (engine: faster-whisper 전용, GPU 에서는 무시됨)
+    cpu_threads: int = 0
+    # engine="vosk" 일 때만 쓰는 모델 크기. small|large. 언어별로 large 가 없으면(예:
+    # 한국어는 small 뿐) small 로 자동 대체된다(stage3_stt_vosk._MODEL_CATALOG 참고).
+    vosk_model_size: str = "small"
 
 
 class SubtitlesConfig(BaseModel):

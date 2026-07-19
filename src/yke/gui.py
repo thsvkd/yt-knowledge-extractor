@@ -44,8 +44,11 @@ _LOG_PANEL_HEIGHT = 260
 _UI_TICK_SECONDS = 0.15
 
 # 스크립트 변환(STT) 모델 선택지. "auto" 는 장치별 기본(GPU:large-v3 / CPU:small)으로,
-# 대부분의 사용자에게 권장되는 기본값이다.
+# 대부분의 사용자에게 권장되는 기본값이다. (engine: faster-whisper 전용 — vosk 선택 시 무시됨)
 _STT_MODELS = ("auto", "tiny", "base", "small", "medium", "large-v3")
+# STT 엔진 선택지: (표시명, stt.engine 값). faster-whisper(AI, 기본)와 vosk(경량 오프라인,
+# non-AI 옵션 — `uv sync --extra vosk` 필요, 정확도는 낮지만 완전 오프라인·초경량) 중 선택.
+_STT_ENGINES = [("AI 모델 (faster-whisper)", "faster-whisper"), ("경량 모델 (Vosk, non-AI)", "vosk")]
 # GPU 가속 선택지: (표시명, stt.device 값).
 _DEVICE_CHOICES = [("자동", "auto"), ("사용", "cuda"), ("사용 안함", "cpu")]
 # 실행 단계 선택지: (표시명, run_pipeline stage 값). 기본값은 '스크립트 추출까지'.
@@ -181,11 +184,22 @@ class PipelineGUI:
 
         # 고급 옵션(접이식).
         self.language_field = ft.TextField(label="언어", value=cfg.language, width=110)
+        _engine_vals = {v for _l, v in _STT_ENGINES}
+        self.stt_engine_dd = ft.Dropdown(
+            label="STT 엔진",
+            value=cfg.stt.engine if cfg.stt.engine in _engine_vals else "faster-whisper",
+            width=190,
+            tooltip=(
+                "AI 모델: faster-whisper(정확도 높음, 기본). "
+                "경량 모델: Vosk(완전 오프라인·초경량, 정확도는 낮음 — 아래 모델/GPU 설정은 무시됨)"
+            ),
+            options=[ft.dropdown.Option(key=v, text=label) for label, v in _STT_ENGINES],
+        )
         self.stt_model_dd = ft.Dropdown(
             label="스크립트 변환 모델",
             value=cfg.stt.model if cfg.stt.model in _STT_MODELS else "auto",
             width=180,
-            tooltip="auto: GPU면 large-v3(최고 품질), GPU 없으면 small 로 자동 선택",
+            tooltip="auto: GPU면 large-v3(최고 품질), GPU 없으면 small 로 자동 선택 (AI 모델 엔진 전용)",
             options=[ft.dropdown.Option(x) for x in _STT_MODELS],
         )
         _device_vals = {v for _l, v in _DEVICE_CHOICES}
@@ -224,7 +238,12 @@ class PipelineGUI:
                     content=ft.Column(
                         [
                             ft.Row(
-                                [self.language_field, self.stt_model_dd, self.stt_device_dd],
+                                [
+                                    self.language_field,
+                                    self.stt_engine_dd,
+                                    self.stt_model_dd,
+                                    self.stt_device_dd,
+                                ],
                                 wrap=True,
                             ),
                             self.llm_model_dd,
@@ -589,12 +608,13 @@ class PipelineGUI:
         return Config(
             videos=self._urls(),
             language=self.language_field.value.strip() or "ko",
-            # UI 로 노출한 model/device 만 덮어쓰고, 노출하지 않는 나머지 STT 필드
-            # (compute_type/word_timestamps/batched/batch_size 등, 미래 필드 포함)는
-            # base 설정에서 그대로 계승한다(필드별 재조립 시 새 필드가 조용히 기본값으로
-            # 되돌아가는 문제를 방지).
+            # UI 로 노출한 engine/model/device 만 덮어쓰고, 노출하지 않는 나머지 STT 필드
+            # (compute_type/word_timestamps/batched/batch_size/cpu_threads/vosk_model_size
+            # 등, 미래 필드 포함)는 base 설정에서 그대로 계승한다(필드별 재조립 시 새
+            # 필드가 조용히 기본값으로 되돌아가는 문제를 방지).
             stt=base.stt.model_copy(
                 update={
+                    "engine": self.stt_engine_dd.value or "faster-whisper",
                     "model": self.stt_model_dd.value or "auto",
                     "device": self.stt_device_dd.value or "auto",
                 }

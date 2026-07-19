@@ -130,6 +130,53 @@ class TestTranscribeBatchedGate(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["batch_size"], 4)
 
 
+class TestEngineDispatch(unittest.TestCase):
+    """cfg.engine="vosk" 면 stage3_stt_vosk 로 위임하고, faster-whisper 경로는 건드리지 않는지."""
+
+    def test_vosk_engine_delegates_to_vosk_module(self):
+        cfg = SimpleNamespace(engine="vosk", vosk_model_size="small")
+        with mock.patch("yke.pipeline.stage3_stt_vosk.transcribe", return_value=[]) as vosk_transcribe:
+            result = stage3_stt.transcribe(Path("audio.webm"), "ko", cfg, log=lambda m: None)
+        vosk_transcribe.assert_called_once()
+        self.assertEqual(result, [])
+
+    def test_missing_engine_field_defaults_to_faster_whisper(self):
+        # 기존 SimpleNamespace 기반 테스트/구config 는 engine 필드가 없을 수 있다 —
+        # getattr 폴백으로 faster-whisper 경로를 그대로 타야 한다(하위호환).
+        cfg = SimpleNamespace(
+            model="small",
+            device="cpu",
+            compute_type="int8",
+            batched=False,
+            batch_size=16,
+            word_timestamps=False,
+        )
+        with (
+            mock.patch.object(stage3_stt, "_get_model", return_value=object()),
+            mock.patch.object(stage3_stt, "_run", return_value=[]) as run,
+        ):
+            stage3_stt.transcribe(Path("audio.webm"), "ko", cfg)
+        run.assert_called_once()
+
+
+class TestEffectiveCpuThreads(unittest.TestCase):
+    def test_gpu_device_is_always_zero(self):
+        self.assertEqual(stage3_stt._effective_cpu_threads("cuda", 8), 0)
+
+    def test_explicit_request_is_respected_on_cpu(self):
+        self.assertEqual(stage3_stt._effective_cpu_threads("cpu", 6), 6)
+
+    def test_auto_detects_physical_cores_on_cpu(self):
+        with mock.patch.object(stage3_stt, "_detect_physical_cpu_threads", return_value=4):
+            self.assertEqual(stage3_stt._effective_cpu_threads("cpu", 0), 4)
+
+    def test_detection_failure_falls_back_to_zero(self):
+        stage3_stt._physical_cpu_threads_cache = None
+        with mock.patch.dict("sys.modules", {"psutil": None}):
+            self.assertEqual(stage3_stt._detect_physical_cpu_threads(), 0)
+        stage3_stt._physical_cpu_threads_cache = None  # 다른 테스트에 캐시가 새지 않게 리셋
+
+
 class TestRunProgressCallback(unittest.TestCase):
     """_run 이 세그먼트 도착마다 on_progress(완료초, 전체초) 를 호출하는지 검증한다."""
 
@@ -147,6 +194,60 @@ class TestRunProgressCallback(unittest.TestCase):
         )
         self.assertEqual(calls, [(2.0, 5.0), (5.0, 5.0)])
         self.assertEqual([s.text for s in result], ["hello", "world"])
+
+
+class TestRunShouldStop(unittest.TestCase):
+    """중단 요청이 영상 전체 STT 가 끝나길 기다리지 않고 세그먼트 경계에서 즉시 먹히는지."""
+
+    def test_stops_before_processing_further_segments(self):
+        seg1 = SimpleNamespace(start=0.0, end=2.0, text="hello")
+        seg2 = SimpleNamespace(start=2.0, end=5.0, text="world")
+        info = SimpleNamespace(duration=5.0)
+        model = mock.Mock()
+        model.transcribe.return_value = (iter([seg1, seg2]), info)
+        cfg = SimpleNamespace(word_timestamps=False)
+
+        calls: list[tuple[float, float]] = []
+        # 첫 세그먼트 확인 때는 False(처리), 두 번째 확인 때 True(중단).
+        should_stop = mock.Mock(side_effect=[False, True])
+        with self.assertRaises(stage3_stt.StoppedError):
+            stage3_stt._run(
+                model,
+                Path("a.webm"),
+                "ko",
+                cfg,
+                on_progress=lambda d, t: calls.append((d, t)),
+                should_stop=should_stop,
+            )
+        # 두 번째 세그먼트는 on_progress 도 안 받고 결과에도 안 들어간다.
+        self.assertEqual(calls, [(2.0, 5.0)])
+
+
+class TestTranscribeStoppedError(unittest.TestCase):
+    """중단 요청(StoppedError)이 GPU 실패로 오인돼 CPU 폴백으로 흘러가지 않는지."""
+
+    def _cfg(self, **overrides) -> SimpleNamespace:
+        base = dict(
+            model="small",
+            device="cuda",
+            compute_type="float16",
+            batched=False,
+            batch_size=16,
+            word_timestamps=False,
+        )
+        base.update(overrides)
+        return SimpleNamespace(**base)
+
+    def test_stopped_error_is_not_treated_as_gpu_failure(self):
+        with (
+            mock.patch.object(stage3_stt, "_get_model", return_value=object()),
+            mock.patch.object(
+                stage3_stt, "_run", side_effect=stage3_stt.StoppedError("stop")
+            ) as run,
+        ):
+            with self.assertRaises(stage3_stt.StoppedError):
+                stage3_stt.transcribe(Path("audio.webm"), "ko", self._cfg())
+        run.assert_called_once()  # CPU 폴백으로 재시도하지 않는다
 
 
 if __name__ == "__main__":

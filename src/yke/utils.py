@@ -1,9 +1,17 @@
-"""공통 유틸: 타임스탬프 변환, LLM JSON 응답 파싱."""
+"""공통 유틸: 타임스탬프 변환, LLM JSON 응답 파싱, 협조적 취소 신호."""
 
 from __future__ import annotations
 
 import json
 import re
+
+
+class StoppedError(Exception):
+    """``should_stop()`` 콜백이 True 가 되어 진행 중이던 작업을 중간에 멈췄다는 신호.
+
+    STT 처럼 오래 걸리는 단계가 세그먼트/청크 단위로 협조적 취소를 감지했을 때 이 예외를
+    던져, run_pipeline 이 이를 '실패'가 아니라 '중단'으로 구분해 처리하게 한다.
+    """
 
 
 def is_channel_or_playlist_url(url: str) -> bool:

@@ -5,16 +5,20 @@ videos:
 # 콘텐츠 언어 (Whisper / 자막 언어 힌트)
 language: ko
 
-# 3단계 STT (로컬 faster-whisper 베이스라인)
+# 3단계 STT (로컬 베이스라인). 자막이 없거나 깨졌을 때만 이 경로를 탄다.
 stt:
-  model: auto            # auto | tiny | base | small | medium | large-v3
+  engine: faster-whisper  # faster-whisper(AI, 기본, 정확도 높음) | vosk(경량 오프라인, non-AI —
+                         #   `uv sync --extra vosk` 필요, 완전 오프라인·초경량이지만 정확도는 뚜렷이 낮음)
+  model: auto            # auto | tiny | base | small | medium | large-v3  (engine: faster-whisper 전용)
                          #   auto: GPU면 large-v3(최고 품질), GPU 없으면 small 로 자동 선택
-  device: auto           # auto | cuda | cpu
+  device: auto           # auto | cuda | cpu  (engine: faster-whisper 전용)
   compute_type: auto     # auto | int8 | int8_float16 | float16
                          #   auto: GPU면 float16, CPU면 int8 로 자동 선택(권장)
   word_timestamps: false # 다운스트림은 세그먼트 시각만 사용 → 단어 타임스탬프는 불필요(속도↑)
   batched: true          # GPU 배치 추론(BatchedInferencePipeline)으로 가속. cuda 아니면 무시.
   batch_size: 16         # large 계열은 8GB VRAM 스래싱 방지를 위해 내부적으로 4 로 상한 적용됨
+  cpu_threads: 0          # CPU 추론 스레드 수. 0 이면 물리 코어 수 자동 감지(psutil, 실측 ~10%↑)
+  vosk_model_size: small # small | large. 언어별로 large 가 없으면(예: 한국어) small 로 자동 대체(engine: vosk 전용)
 
 # 트랜스크립트 우선순위: ① 유튜브+업로더 제공 자막(수동 자막) > ② STT(AI 모델) > ③ 유튜브 자동자막.
 # 업로더가 직접 제공한 자막을 1순위로 신뢰하되, 그 자막이 깨진 채로 제공된 경우(예: '10분
