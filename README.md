@@ -144,8 +144,19 @@ CLI 없이 전사 단계만 먼저 실행해 결과를 확인한 뒤, 전체 위
 
 <br>
 
-코드 서명이 없는 개인 배포본에서 발생하는 정상적인 경고입니다. *"Windows의 PC 보호"*
-창에서 **추가 정보 → 실행**을 선택하면 됩니다.
+코드 서명이 없는 개인 배포본에서 발생하는 **SmartScreen 평판 경고**입니다(바이러스로
+격리된 것이 아닙니다). 다음 중 하나로 실행할 수 있습니다.
+
+- *"Windows의 PC 보호"* 창에서 **추가 정보 → 실행**.
+- 또는 다운로드 표식을 제거합니다. 받은 `.zip`(또는 `.exe`)을 **우클릭 → 속성 → 하단의
+  "차단 해제" 체크 → 확인**. PowerShell로는 압축을 푼 폴더에서:
+
+  ```powershell
+  Get-ChildItem <폴더> -Recurse | Unblock-File
+  ```
+
+> 참고: 앱 내 **자동 업데이트**로 받는 새 버전에는 이 경고가 뜨지 않습니다(프로그램이
+> 직접 내려받아 다운로드 표식이 붙지 않기 때문). 즉 위 절차는 **최초 1회 설치에만** 필요합니다.
 
 </details>
 
@@ -264,6 +275,26 @@ python scripts/build.py --gpu   # NVIDIA CUDA 가속 버전
 - 결과물: `dist/yke-<cpu|gpu>-<platform>/` — 실행 파일 + DLL + `data/` 한 세트. **폴더째** 배포·실행합니다. 압축본 `dist/yke-<cpu|gpu>-<platform>.zip`은 GitHub Releases 업로드용입니다.
 - GPU 변형은 STT(faster-whisper→CTranslate2) 가속에 필요한 `nvidia-cublas-cu12` 런타임을 번들에 포함합니다(빌드 중에만 `[project.dependencies]`에 임시 주입). CPU 전용은 이를 제외해 더 가볍게 빌드합니다. GPU 번들도 GPU가 없으면 자동으로 CPU(int8)로 폴백합니다.
 - 사전 준비(Windows): Visual Studio "Desktop development with C++" 워크로드가 필요합니다(없으면 스크립트가 설치 방법을 안내). Flutter SDK는 `flet build`가 필요 시 자동으로 다운로드합니다.
+
+**코드 서명 (선택, Windows)**
+
+미서명 배포본은 SmartScreen 경고가 뜹니다(위 [자주 묻는 질문](#자주-묻는-질문) 참고). 서명하면
+게시자 이름이 표시되고, 정식 CA 인증서면 경고도 사라집니다.
+
+```bash
+# 1) self-signed 인증서 생성(한 번). 출력된 지문(Thumbprint)을 복사합니다.
+pwsh -File scripts/make_selfsigned_cert.ps1
+# 2) 지문을 환경 변수로 지정하고 빌드하면 앱 exe 가 자동 서명됩니다(PowerShell).
+$env:YKE_SIGN_THUMBPRINT = "<복사한 지문>"
+python scripts/build.py
+```
+
+- 인증서를 지정하지 않으면 서명을 건너뛰고 미서명으로 빌드합니다(기본 동작).
+- **self-signed 의 한계**: 그 인증서를 "신뢰할 수 있는 루트/게시자"에 설치한 PC 에서만
+  신뢰되며 **SmartScreen 경고는 없애지 못합니다**(본인·소수 배포용). 넓은 배포에는 정식 CA
+  인증서나 오픈소스 무료 서명([SignPath Foundation](https://signpath.org/))이 필요합니다.
+- 정식 `.pfx` 인증서가 있으면 지문 대신 `YKE_SIGN_PFX`(+`YKE_SIGN_PFX_PASSWORD`)로 지정합니다.
+- 이미 빌드된 폴더를 재서명하려면: `python scripts/sign.py dist/yke-cpu-windows`
 
 **테스트**
 

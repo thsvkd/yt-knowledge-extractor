@@ -34,6 +34,7 @@ import subprocess
 from pathlib import Path
 
 from _common import REPO_ROOT, check, fail, info, require_uv
+from sign import maybe_sign_bundle
 
 # flet build 메타데이터.
 _PRODUCT = "YouTube Knowledge Extractor"
@@ -228,6 +229,10 @@ def main() -> int:
 
     dst = stash_output(target, variant)
     verify_artifact(dst, target)
+    # 앱 exe 서명(YKE_SIGN_THUMBPRINT/YKE_SIGN_PFX 설정 시). 압축 전에 해야 zip 에 서명본이
+    # 담긴다. 인증서 미지정이면 건너뛰고 미서명으로 진행한다.
+    if target == "windows":
+        maybe_sign_bundle(dst)
     archive = compress_bundle(dst)
     info(f"배포 폴더: {dst}  (폴더째 배포·실행하세요)")
     info(f"배포 압축본: {archive}  ({archive.stat().st_size / 1024 / 1024:.0f} MB, GitHub Releases 업로드용)")
