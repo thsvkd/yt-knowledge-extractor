@@ -22,7 +22,7 @@ from pathlib import Path
 
 import flet as ft
 
-from . import __version__, updater
+from . import __version__, velopack_update
 from .config import Config, LLMConfig, load_config
 from .llm.claude_client import is_available as _claude_cli_available
 from .run import Progress, PipelineResult, run_pipeline, _fmt_hms
@@ -135,7 +135,7 @@ class PipelineGUI:
         self._is_running = False  # 파이프라인 실행 상태
         self._last_result: PipelineResult | None = None
         self._last_out_dir: Path | None = None
-        self._pending_release: updater.Release | None = None  # 다운로드 대기 중인 업데이트
+        self._pending_update = None  # 다운로드 대기 중인 velopack UpdateInfo
         # 상태 텍스트는 백그라운드 스레드가 값만 기록하고, 렌더 틱이 일괄 반영한다.
         self._status_lock = threading.Lock()
         self._status_dirty = threading.Event()
@@ -604,78 +604,75 @@ class PipelineGUI:
         self._check_updates(manual=False)
 
     def _on_update_click(self) -> None:
-        if self._pending_release is None:
+        if self._pending_update is None:
             self._set_update_status("업데이트 확인 중…", None)
             self.page.run_thread(lambda: self._check_updates(manual=True))
         else:
             self.page.run_thread(self._download_and_apply)
 
     def _check_updates(self, manual: bool) -> None:
-        variant, target = updater.detect_variant_target()
+        # Velopack 설치본에서만 동작한다(개발/비설치 실행은 조용히 건너뛴다).
+        if not velopack_update.is_installed():
+            if manual:
+                self._set_update_status(
+                    "개발 환경에서는 업데이트를 확인하지 않습니다(설치본에서만 동작).",
+                    self._muted_color,
+                )
+            return
         try:
-            release = updater.check_latest(__version__, variant, target)
+            info = velopack_update.check()
         except Exception as exc:
             logger.warning("업데이트 확인 실패", exc_info=True)
             if manual:
                 self._set_update_status(f"업데이트 확인 실패: {exc}", ft.Colors.AMBER)
             return
-        if release is not None:
-            self._pending_release = release
+        if info is not None:
+            self._pending_update = info
+            ver = velopack_update.target_version(info)
             # flet 0.85 Button 의 라벨은 content 다(text 로 쓰면 무시되어 라벨이 안 바뀐다).
-            self.update_btn.content = f"v{release.version} 로 업데이트 후 재시작"
+            self.update_btn.content = f"v{ver} 로 업데이트 후 재시작"
             self.update_btn.icon = ft.Icons.SYSTEM_UPDATE
             self._safe_update(self.update_btn)
             self._set_update_status(
-                f"새 버전 v{release.version} 사용 가능 (현재 v{__version__})", ft.Colors.GREEN
+                f"새 버전 v{ver} 사용 가능 (현재 v{__version__})", ft.Colors.GREEN
             )
         elif manual:
             self._set_update_status(f"최신 버전입니다 (v{__version__}).", self._muted_color)
 
     def _download_and_apply(self) -> None:
-        release = self._pending_release
-        if release is None:
+        info = self._pending_update
+        if info is None:
             return
-        root = updater.install_root()
-        if not updater.is_bundle(root):
+        if not velopack_update.is_installed():
             self._set_update_status(
-                "개발 환경에서는 업데이트를 적용하지 않습니다(배포 번들에서만 동작).",
+                "개발 환경에서는 업데이트를 적용하지 않습니다(설치본에서만 동작).",
                 ft.Colors.AMBER,
             )
             return
-        import tempfile
-
-        dl_dir = Path(tempfile.gettempdir()) / "yke_update"
-        # 추출본은 설치 볼륨(install_dir.parent)에 둔다. 그래야 사이드카의 폴더 스왑이 원자적
-        # rename 이 된다(temp 가 다른 드라이브면 비원자적 copy 라 실패 시 install 이 깨진다).
-        extract_dir = root.parent / ".yke_update_staging"
+        ver = velopack_update.target_version(info)
         try:
-            self._set_update_status(f"v{release.version} 다운로드 중… 0%", None)
-            zip_path = updater.download(release, dl_dir, progress_cb=self._download_progress)
-            self._set_update_status("압축 해제 중…", None)
-            new_dir = updater.extract(zip_path, extract_dir)
-            zip_path.unlink(missing_ok=True)  # 다운로드 zip 은 이제 불필요
+            self._set_update_status(f"v{ver} 다운로드 중… 0%", None)
+            # 델타(있으면)만 받아 로컬 패키지로 재구성한다. 진행률은 _download_progress 로.
+            velopack_update.download(info, progress_cb=self._download_progress)
         except Exception as exc:
             logger.error("업데이트 다운로드 실패", exc_info=True)
             self._set_update_status(f"업데이트 실패: {exc}", ft.Colors.RED)
-            self._pending_release = None
+            self._pending_update = None
             return
-        app_exe = (
-            "yt-knowledge-extractor.exe" if sys.platform == "win32" else "yt-knowledge-extractor"
-        )
         self._set_update_status("업데이트를 적용하고 재시작합니다…", ft.Colors.GREEN)
-        # apply_and_restart 는 os._exit 로 하드 종료하므로, 그 전에 위 안내를 클라이언트로
+        # apply_and_restart 는 현재 프로세스를 종료하므로, 그 전에 위 안내를 클라이언트로
         # 확실히 밀어낸다(창이 아무 메시지 없이 갑자기 사라지지 않도록).
         try:
             self.page.update()
         except Exception:
             logger.debug("최종 상태 flush 실패", exc_info=True)
         time.sleep(0.4)
-        # 이 호출은 사이드카를 띄우고 현재 프로세스를 종료한다(앱이 닫히고 새 버전이 재실행).
-        updater.apply_and_restart(new_dir, app_exe=app_exe, install_dir=root)
+        # current\ 를 새 버전으로 교체하고 앱을 재시작한다(현재 프로세스 종료).
+        velopack_update.apply_and_restart(info)
 
     def _download_progress(self, frac: float) -> None:
-        version = self._pending_release.version if self._pending_release else ""
-        self._set_update_status(f"v{version} 다운로드 중… {int(frac * 100)}%", None)
+        ver = velopack_update.target_version(self._pending_update) if self._pending_update else ""
+        self._set_update_status(f"v{ver} 다운로드 중… {int(frac * 100)}%", None)
 
     def _set_update_status(self, message: str, color: str | None) -> None:
         self.update_status.value = message

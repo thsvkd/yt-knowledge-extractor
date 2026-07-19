@@ -19,6 +19,10 @@ dependencies = [
     # 끌어와 번들 flet 과 flet-cli 가 만든 UI 클라이언트(0.85.x) 버전이 어긋난다. 그러면 앱은
     # 뜨지만 화면이 안 그려진다(빈 창). flet-cli 와 정확히 같은 버전으로 고정한다.
     "flet-desktop==0.85.3",
+    # 설치/자동 업데이트(Velopack). velopack 휠은 abi3(cp37-abi3)라 flet 임베디드 Python
+    # 버전과 무관하게 번들에 포함된다. 앱 진입점(main.py)에서 App().run() 으로 설치/업데이트
+    # 라이프사이클 훅을 처리하고, GUI 에서 UpdateManager 로 GitHub Releases 업데이트를 받는다.
+    "velopack>=1.2.0",
 ]
 
 [project.optional-dependencies]
