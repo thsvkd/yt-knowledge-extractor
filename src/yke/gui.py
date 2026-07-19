@@ -220,6 +220,11 @@ class PipelineGUI:
             hint_style=_hint,
         )
         self.force_cb = ft.Checkbox(label="강제로 재생성", value=False)
+        self.force_local_stt_cb = ft.Checkbox(
+            label="강제로 로컬 변환 (자막 무시, STT만 사용)",
+            value=cfg.subtitles.stt_first,
+            tooltip="활성화하면 유튜브 자막을 무시하고 로컬 STT(faster-whisper)만 사용합니다",
+        )
 
         # 지식 추출·통합은 로컬 Claude Code CLI(`claude -p`)를 호출한다. 인증은 CLI 의
         # 로그인 상태를 그대로 쓰므로 앱에서 별도로 토큰을 입력·저장하지 않는다.
@@ -249,6 +254,7 @@ class PipelineGUI:
                             self.llm_model_dd,
                             self.cred_status,
                             self.force_cb,
+                            self.force_local_stt_cb,
                             ft.Divider(),
                             ft.Row(
                                 [self.update_btn, self.update_status],
@@ -601,7 +607,7 @@ class PipelineGUI:
         """UI 필드로 base 설정을 덮어써 이번 실행용 Config 를 만든다.
 
         저장 폴더 하나로 캐시(data_dir)와 산출물(output_dir)을 모두 둔다. 노출하지 않는
-        값(compute_type/word_timestamps/subtitles/청크 크기)은 base 에서 계승한다.
+        값(compute_type/word_timestamps/청크 크기)은 base 에서 계승한다.
         """
         base = self.base_cfg
         folder = self.out_field.value.strip() or "output"
@@ -619,7 +625,9 @@ class PipelineGUI:
                     "device": self.stt_device_dd.value or "auto",
                 }
             ),
-            subtitles=base.subtitles,
+            subtitles=base.subtitles.model_copy(
+                update={"stt_first": bool(self.force_local_stt_cb.value)}
+            ),
             llm=LLMConfig(
                 model=self._selected_llm_model() or base.llm.model,
                 max_chars_per_chunk=base.llm.max_chars_per_chunk,
@@ -691,6 +699,7 @@ class PipelineGUI:
             self.out_browse_btn,
             self.stage_dd,
             self.force_cb,
+            self.force_local_stt_cb,
             self.language_field,
             self.stt_model_dd,
             self.stt_device_dd,
