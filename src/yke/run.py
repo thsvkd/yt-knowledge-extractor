@@ -432,9 +432,22 @@ def run_pipeline(
             )
             return PipelineResult(video_count=len(transcripts), failures=failures, stopped=True)
         except Exception as exc:  # 한 영상 실패가 배치 전체를 막지 않도록
+            error_msg = str(exc).lower()
+            reason = ""
+            if "unavailable" in error_msg or "not available" in error_msg:
+                reason = " (삭제되었거나 비공개 영상)"
+            elif "deleted" in error_msg:
+                reason = " (삭제된 영상)"
+            elif "private" in error_msg or "this video is private" in error_msg:
+                reason = " (비공개 영상)"
+            elif "join this channel" in error_msg or "members only" in error_msg:
+                reason = " (멤버 전용 영상)"
+            elif "georestricted" in error_msg or "not available in your country" in error_msg:
+                reason = " (지역 제한)"
+
             on_progress(
                 Progress(
-                    message=f"[{url}] 실패 -> 건너뜀: {type(exc).__name__}: {exc}",
+                    message=f"[{url}] 실패 -> 건너뜀: {type(exc).__name__}: {exc}{reason}",
                     level="error",
                     phase="transcript",
                 )
@@ -464,7 +477,17 @@ def run_pipeline(
     if not transcripts:
         if failures and not videos:
             raise RuntimeError(f"처리할 영상이 없습니다 (채널/재생목록 분석 실패: {failures}).")
-        raise RuntimeError("처리된 영상이 없습니다 (모든 영상 실패).")
+        if failures:
+            raise RuntimeError(
+                f"처리된 영상이 없습니다. {len(failures)}개 영상이 모두 실패했습니다:\n"
+                f"  {failures}\n\n"
+                f"가능한 원인:\n"
+                f"  • 영상이 삭제되었거나 비공개로 변경됨\n"
+                f"  • YouTube 지역 제한 또는 일시적 서버 오류\n"
+                f"  • 네트워크 문제 또는 IP 차단\n\n"
+                f"위 로그에서 각 영상별 구체적인 에러를 확인하세요."
+            )
+        raise RuntimeError("처리할 영상이 없습니다.")
 
     if should_stop():
         return PipelineResult(
