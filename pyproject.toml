@@ -15,7 +15,10 @@ dependencies = [
     # GUI(flet)는 이 앱의 일급 기능(`yke-gui`)이므로 기본 의존성으로 둔다. optional extra 로
     # 두면 uv 가 명령마다 환경을 재동기화하며 flet 을 설치/삭제 반복한다. flet-desktop 은
     # flet 본체를 함께 끌어온다.
-    "flet-desktop>=0.85.3",
+    # flet build 는 이 제약으로 번들용 flet 을 별도 설치하므로 >= 로 두면 최신(예: 0.86.x)을
+    # 끌어와 번들 flet 과 flet-cli 가 만든 UI 클라이언트(0.85.x) 버전이 어긋난다. 그러면 앱은
+    # 뜨지만 화면이 안 그려진다(빈 창). flet-cli 와 정확히 같은 버전으로 고정한다.
+    "flet-desktop==0.85.3",
 ]
 
 [project.optional-dependencies]
@@ -47,7 +50,9 @@ packages = ["src/yke"]
 # 매번 "불필요"로 보고 제거하고, 직후 `flet build` 가 다시 설치해 설치/삭제가 반복된다.
 # pytest 도 마찬가지로 선언 없이 설치하면 `uv sync`(scripts/setup.py 포함) 가 매번
 # 지워버린다. dev 그룹에 두면 sync 가 보존해 이 churn 을 없앤다.
-dev = ["flet-cli>=0.85.3", "pytest>=8.0"]
+# flet-cli 는 UI 클라이언트(Flutter) 버전을 결정한다. 번들 flet-desktop 과 반드시 같은
+# 버전으로 고정해야 렌더링 프로토콜이 맞는다(불일치 시 빈 창).
+dev = ["flet-cli==0.85.3", "pytest>=8.0"]
 
 [tool.flet.app]
 # src-layout 이므로 flet build 가 src/ 아래에서 진입 모듈을 찾도록 지정한다.

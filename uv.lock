@@ -1584,7 +1584,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "faster-whisper", specifier = ">=1.1.0" },
-    { name = "flet-desktop", specifier = ">=0.85.3" },
+    { name = "flet-desktop", specifier = "==0.85.3" },
     { name = "imageio-ffmpeg", specifier = ">=0.5.1" },
     { name = "nvidia-cublas-cu12", marker = "extra == 'gpu'" },
     { name = "psutil", specifier = ">=5.9" },
@@ -1597,6 +1597,6 @@ provides-extras = ["gpu", "vosk"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "flet-cli", specifier = ">=0.85.3" },
+    { name = "flet-cli", specifier = "==0.85.3" },
     { name = "pytest", specifier = ">=8.0" },
 ]
