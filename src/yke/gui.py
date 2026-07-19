@@ -2,8 +2,8 @@
 
 CLI 와 동일한 코어(:func:`run_pipeline`)를 재사용하는 얇은 표현 계층이다. 파이프라인은
 백그라운드 스레드에서 돌리고, 진행바·상태·결과 로그를 실시간으로 갱신한다. 취소는
-:class:`threading.Event` 로 영상/단계 경계에서 협조적으로 처리한다(진행 중인 단일 영상의
-STT·LLM 호출은 끊지 않고 다음 경계에서 멈춘다).
+:class:`threading.Event` 로 처리한다. STT 는 세그먼트/청크 단위로 확인해 진행 중인
+영상 하나의 변환 도중에도 곧바로 멈추고, LLM 호출은 영상/단계 경계에서 멈춘다.
 
 naver-blog-crawler 의 GUI 와 같은 명령형(imperative) flet 패턴을 따른다.
 """
@@ -390,7 +390,8 @@ class PipelineGUI:
         """창이 닫히면 실행 중인 파이프라인을 취소하고 렌더 틱 스레드를 깔끔히 종료시킨다.
 
         _stop 을 세우지 않으면 flet 워커 스레드(비데몬)에서 돌던 긴 STT·LLM 배치가
-        보이지 않는 채로 끝까지 실행돼 프로세스가 남는다. 다음 영상/단계 경계에서 멈춘다.
+        보이지 않는 채로 끝까지 실행돼 프로세스가 남는다. STT 는 세그먼트/청크 단위로
+        곧 멈추고, LLM 호출은 다음 영상/단계 경계에서 멈춘다.
         """
         self._stop.set()
         self._app_closing.set()
@@ -398,7 +399,7 @@ class PipelineGUI:
 
     def _request_stop(self) -> None:
         self._stop.set()
-        self._set_status_now("중단 요청됨 — 현재 작업을 마치고 멈춥니다…", ft.Colors.AMBER)
+        self._set_status_now("중단 요청됨 — 곧 멈춥니다…", ft.Colors.AMBER)
 
     def _refresh_cred_status(self) -> None:
         """Claude Code CLI 감지 여부를 상태 텍스트에 반영한다."""
