@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -138,7 +139,10 @@ class TestRunPipeline(unittest.TestCase):
 
     def test_channel_expands_and_dedups(self) -> None:
         def fake_expand(url, limit, *, log=print):
-            return ["https://youtu.be/a", "https://youtu.be/b"]
+            return [
+                run.stage1_ingest.VideoEntry(url="https://youtu.be/a"),
+                run.stage1_ingest.VideoEntry(url="https://youtu.be/b"),
+            ]
 
         with (
             mock.patch.object(run.stage1_ingest, "expand_source", side_effect=fake_expand),
@@ -191,6 +195,50 @@ class TestRunPipeline(unittest.TestCase):
         self.assertEqual(res.unit_count, 1)
         self.assertEqual(res.concept_count, 0)
         self.assertIsNone(res.wiki_path)
+
+    def test_channel_preskips_unplayable_without_probe(self) -> None:
+        # 채널 분석에서 availability=subscriber_only 로 이미 확인된 영상은 build_transcript
+        # 를 아예 호출하지 않고 즉시 스킵한다(영상별 재조회 없음 = 빠른 스킵).
+        def fake_expand(url, limit, *, log=print):
+            return [
+                run.stage1_ingest.VideoEntry(
+                    url="https://youtu.be/mem", video_id="mem", availability="subscriber_only"
+                ),
+                run.stage1_ingest.VideoEntry(url="https://youtu.be/ok", video_id="ok"),
+            ]
+
+        with (
+            mock.patch.object(run.stage1_ingest, "expand_source", side_effect=fake_expand),
+            mock.patch.object(run, "build_transcript", side_effect=_fake_bt) as bt,
+        ):
+            res = run.run_pipeline(
+                ["https://www.youtube.com/@chan"], self.cfg, stage="transcript"
+            )
+        # 재생 가능한 영상(ok)만 실제로 처리 → build_transcript 는 딱 1회 호출.
+        self.assertEqual(bt.call_count, 1)
+        self.assertEqual(res.video_count, 1)
+        self.assertIn("https://youtu.be/mem", res.failures)
+        skipped = [r for r in res.results if r.status == "skipped"]
+        self.assertEqual(len(skipped), 1)
+        self.assertEqual(skipped[0].error_reason, "멤버 전용 영상")
+
+    def test_result_records_elapsed_and_per_video(self) -> None:
+        with mock.patch.object(run, "build_transcript", side_effect=_fake_bt):
+            res = run.run_pipeline(["u1", "u2"], self.cfg, stage="transcript")
+        self.assertGreaterEqual(res.elapsed_seconds, 0.0)
+        self.assertEqual(len(res.results), 2)
+        self.assertTrue(all(r.status == "done" for r in res.results))
+
+    def test_run_report_written(self) -> None:
+        with mock.patch.object(run, "build_transcript", side_effect=_fake_bt):
+            res = run.run_pipeline(["u1"], self.cfg, stage="transcript")
+        report = Path(res.out_dir) / "run_report.json"
+        self.assertTrue(report.exists())
+        data = json.loads(report.read_text(encoding="utf-8"))
+        self.assertEqual(data["total"], 1)
+        self.assertEqual(data["done"], 1)
+        self.assertIn("elapsed_seconds", data)
+        self.assertEqual(len(data["videos"]), 1)
 
 
 class TestFmtHms(unittest.TestCase):
@@ -299,12 +347,24 @@ class TestBuildTranscriptPriority(unittest.TestCase):
 
     @contextlib.contextmanager
     def _patched(self, meta, stt, parse):
+        # ingest 는 build_meta(메타만) + lazy 다운로드(자막/오디오)로 쪼개졌다. 자막은
+        # setUp 이 미리 만들어 둔 audio.ko.vtt 를, 오디오는 audio.webm 을 돌려주도록 목킹해
+        # 실제 네트워크 없이 우선순위/폴백 로직만 검증한다. (자막으로 처리되는 경로에서는
+        # download_audio 가 호출되지 않아야 오디오 미다운로드 성능 요구가 지켜진다.)
+        root = self.data / self.vid
         with (
             mock.patch.object(run.stage1_ingest, "probe", return_value={"id": self.vid}),
-            mock.patch.object(run.stage1_ingest, "ingest", return_value=meta),
+            mock.patch.object(run.stage1_ingest, "build_meta", return_value=meta),
+            mock.patch.object(
+                run.stage1_ingest, "download_manual_subtitle", return_value=root / "audio.ko.vtt"
+            ),
+            mock.patch.object(
+                run.stage1_ingest, "download_audio", return_value=root / "audio.webm"
+            ) as dl_audio,
             mock.patch.object(run.stage3_stt, "transcribe", side_effect=stt),
             mock.patch.object(run.stage2_subtitles, "parse_vtt", parse),
         ):
+            self._dl_audio = dl_audio
             yield
 
     def test_default_prefers_valid_manual_caption_over_stt(self):
@@ -323,6 +383,38 @@ class TestBuildTranscriptPriority(unittest.TestCase):
         with self._patched(meta, stt, parse):
             _vid, _m, segs = run.build_transcript("testvid", self._cfg(), self.data, False)
         self.assertEqual([s.text for s in segs], ["앞부분 내용", "뒷부분 내용"])
+
+    def test_valid_manual_caption_skips_audio_download(self):
+        # 성능 핵심: 수동 자막으로 처리되면 오디오 원본을 아예 내려받지 않는다.
+        meta = self._meta(manual_sub_lang="ko", auto_sub_lang="ko")
+
+        def stt(audio, lang, cfg, log=print, on_progress=None, should_stop=None):
+            raise AssertionError("자막으로 처리되면 STT/오디오는 건드리지 않아야 함")
+
+        parse = mock.Mock(
+            return_value=[
+                Segment(start=0, end=300, text="앞부분"),
+                Segment(start=300, end=600, text="뒷부분"),
+            ]
+        )
+        with self._patched(meta, stt, parse):
+            _vid, m, _segs = run.build_transcript("testvid", self._cfg(), self.data, False)
+        self._dl_audio.assert_not_called()  # 오디오 다운로드 없음
+        self.assertEqual(m.get("transcript_source"), "manual")
+
+    def test_stt_fallback_records_source_and_reason(self):
+        # 자막이 모두 없어 STT 로 폴백하면, meta 에 source=stt 와 폴백 사유가 기록된다.
+        meta = self._meta()  # manual/auto 자막 모두 없음
+
+        def stt(audio, lang, cfg, log=print, on_progress=None, should_stop=None):
+            return [Segment(start=0, end=580, text="STT 결과")]
+
+        parse = mock.Mock(return_value=[])
+        with self._patched(meta, stt, parse):
+            _vid, m, _segs = run.build_transcript("testvid", self._cfg(), self.data, False)
+        self._dl_audio.assert_called_once()  # STT 폴백이므로 오디오는 받는다
+        self.assertEqual(m.get("transcript_source"), "stt")
+        self.assertTrue(m.get("fallback_reason"))
 
     def test_broken_manual_caption_falls_through_to_stt(self):
         # 기본(stt_first=False)으로 수동 자막을 먼저 시도하지만, 한 줄짜리라 STT 로 폴백.
