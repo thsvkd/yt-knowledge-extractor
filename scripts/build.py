@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """flet 네이티브 앱 빌드 스크립트. 실행한 OS 를 감지해 데스크톱 앱을 빌드한다.
 
-사용:
-    python scripts/build.py            # CPU 버전 빌드
-    python scripts/build.py --gpu      # GPU(NVIDIA CUDA) 버전 빌드
+배포 모델: CPU 설치기 하나(Velopack) + GPU 온디맨드. NVIDIA 사용자는 앱에서 cuBLAS
+런타임(gpu-runtime-cu12 릴리스)을 필요할 때 받는다(GPU 번들을 따로 배포하지 않는다).
 
-결과물:
-    dist/yke-<cpu|gpu>-<platform>/     # 실행파일 + DLL + data/ 한 세트(폴더째 배포)
-    dist/yke-<cpu|gpu>-<platform>.zip  # 위 폴더 압축본(GitHub Releases 업로드용)
+사용:
+    python scripts/build.py                 # CPU 번들 → Velopack 설치기(dist/velopack/)
+    python scripts/build.py --gpu-runtime   # cuBLAS 온디맨드 에셋 zip(dist/…-cublas-cu12.zip)
+    python scripts/build.py --no-installer  # CPU 번들 폴더/zip 만(설치기 생략)
+    python scripts/build.py --gpu           # (로컬/수동) nvidia 포함 GPU 번들 폴더+zip
+
+결과물(기본):
+    dist/yke-cpu-<platform>/    # flet 번들 폴더(설치기의 원본)
+    dist/velopack/             # Setup.exe + *-full/delta.nupkg + releases.win.json
+                               #   → 이 폴더 전체를 GitHub 릴리스에 올리면 자동 업데이트 동작
+    서명: YKE_SIGN_THUMBPRINT/PFX 설정 시 Velopack 이 전 파일을 signtool 로 서명한다.
 
 CPU / GPU 차이:
     STT(faster-whisper→ctranslate2)의 CUDA 가속에는 cuBLAS 런타임(nvidia-cublas-cu12)이
@@ -29,16 +36,29 @@ from __future__ import annotations
 import argparse
 import os
 import platform
+import re
 import shutil
 import subprocess
 from pathlib import Path
 
 from _common import REPO_ROOT, check, fail, info, require_uv
-from sign import maybe_sign_bundle
+from sign import find_signtool, maybe_sign_bundle, velopack_sign_params
 
 # flet build 메타데이터.
 _PRODUCT = "YouTube Knowledge Extractor"
 _ORG = "com.thsvkd"
+
+# Velopack 패키징 메타. packId(설치 폴더/자동업데이트 식별자)와 레포 URL 은
+# src/yke/velopack_update.py·gpu_runtime.py 의 값과 반드시 일치해야 한다(앱이 이 packId 로
+# %LocalAppData% 에 설치되고 이 레포 릴리스에서 업데이트를 받는다).
+_PACK_ID = "YtKnowledgeExtractor"
+_VELOPACK_CHANNEL = "win"
+_REPO_URL = "https://github.com/thsvkd/yt-knowledge-extractor"
+_APP_EXE = "yt-knowledge-extractor.exe"
+# cuBLAS 런타임 온디맨드 에셋(gpu_runtime.GPU_RUNTIME_TAG/ASSET 과 일치). 앱 버전과 무관해
+# 이 전용 태그에 한 번만 올려 두면 CPU 설치본이 필요 시 받아 쓴다.
+_GPU_RUNTIME_TAG = "gpu-runtime-cu12"
+_GPU_RUNTIME_ASSET = "yke-gpu-runtime-cublas-cu12.zip"
 
 # GPU 빌드에서 번들에 추가할 CUDA 런타임. ctranslate2 4.8 은 cuDNN 로더(cudnn64_9.dll)를
 # 자체 번들하고 whisper 추론에 cuDNN 서브라이브러리를 쓰지 않으므로(RTX 2080 실측 확인:
@@ -210,12 +230,118 @@ def make_gpu_from_cpu(cpu_dst: Path, target: str) -> Path:
     return gpu_dst
 
 
+# -- Velopack 설치기 / GPU 런타임 에셋 ---------------------------------------
+def _app_version() -> str:
+    """src/yke/__init__.py 의 __version__ 을 읽는다(Velopack packVersion 용)."""
+    init = REPO_ROOT / "src" / "yke" / "__init__.py"
+    m = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', init.read_text(encoding="utf-8"))
+    if not m:
+        fail("src/yke/__init__.py 에서 __version__ 을 찾지 못했습니다.")
+    return m.group(1)
+
+
+def _find_vpk() -> str:
+    """Velopack CLI(vpk) 경로. PATH 또는 dotnet 글로벌 툴 기본 위치에서 찾는다."""
+    exe = shutil.which("vpk")
+    if exe:
+        return exe
+    cand = Path.home() / ".dotnet" / "tools" / ("vpk.exe" if os.name == "nt" else "vpk")
+    if cand.exists():
+        return str(cand)
+    fail("vpk(Velopack CLI)를 찾지 못했습니다. 설치: dotnet tool install -g vpk")
+
+
+def velopack_pack(bundle_dir: Path, version: str) -> Path:
+    """CPU 번들을 Velopack 설치기(Setup.exe) + 업데이트 패키지로 만든다.
+
+    기존 GitHub 릴리스를 먼저 받아(vpk download github) 있으면 그 위에 델타를 만든다(첫
+    릴리스면 없음 → 전체 릴리스). 인증서(YKE_SIGN_THUMBPRINT/PFX)가 있으면 --signParams 로
+    전 파일을 서명한다. 산출물: dist/velopack/ (Setup.exe, *-full.nupkg, *-delta.nupkg,
+    releases.win.json …). 이 폴더 전체를 GitHub 릴리스에 올리면 앱이 자동 업데이트에 쓴다.
+    """
+    vpk = _find_vpk()
+    out = REPO_ROOT / "dist" / "velopack"
+    out.mkdir(parents=True, exist_ok=True)
+
+    # 서명 요청 시 vpk 가 signtool 을 PATH 에서 찾도록 signtool 디렉터리를 앞에 붙인다.
+    env = dict(os.environ)
+    sign_params = velopack_sign_params()
+    if sign_params:
+        signtool = find_signtool()
+        if signtool is None:
+            fail("서명이 요청됐지만 signtool.exe 를 찾지 못했습니다. Windows SDK 를 설치하세요.")
+        env["PATH"] = str(signtool.parent) + os.pathsep + env.get("PATH", "")
+
+    # 1) 기존 릴리스를 받아 델타 기준으로 삼는다. 첫 릴리스/네트워크 실패면 건너뛴다.
+    info("기존 Velopack 릴리스 조회(델타 기준)…")
+    dl = subprocess.run(
+        [vpk, "download", "github", "--repoUrl", _REPO_URL,
+         "--outputDir", str(out), "--channel", _VELOPACK_CHANNEL],
+        cwd=REPO_ROOT, capture_output=True, text=True, env=env,
+    )
+    if dl.returncode != 0:
+        info("  기존 릴리스 없음/조회 실패 → 전체 릴리스로 진행(델타 없음).")
+
+    # 2) 패키징(+서명)
+    cmd = [
+        vpk, "pack",
+        "--packId", _PACK_ID,
+        "--packVersion", version,
+        "--packDir", str(bundle_dir),
+        "--mainExe", _APP_EXE,
+        "--packTitle", _PRODUCT,
+        "--packAuthors", "thsvkd",
+        "--channel", _VELOPACK_CHANNEL,
+        "--outputDir", str(out),
+    ]
+    if sign_params:
+        cmd += ["--signParams", sign_params]
+        info("Velopack 패키징(서명 포함)…")
+    else:
+        info("Velopack 패키징(미서명 — YKE_SIGN_THUMBPRINT/PFX 미설정)…")
+    check(cmd, env=env)
+    return out
+
+
+def build_gpu_runtime_asset() -> Path:
+    """cuBLAS 런타임(nvidia/*)만 담은 zip 을 만든다(gpu_runtime 온디맨드 다운로드용).
+
+    앱 버전과 무관하므로 gpu-runtime-cu12 릴리스에 한 번 올려 두면 CPU 설치본이 필요 시
+    받아 쓴다. zip 최상위는 nvidia/ 트리다(gpu_runtime.download 가 그대로 푼다).
+    """
+    staging = REPO_ROOT / "build" / "_gpu_runtime"
+    if staging.exists():
+        shutil.rmtree(staging)
+    info(f"cuBLAS 런타임 설치(임시): {', '.join(_GPU_DEPS)}")
+    check(["uv", "pip", "install", "--target", str(staging), *_GPU_DEPS])
+    if not (staging / "nvidia").is_dir():
+        fail("nvidia 런타임 디렉터리를 찾지 못했습니다(설치 실패?).")
+    dist = REPO_ROOT / "dist"
+    dist.mkdir(parents=True, exist_ok=True)
+    base = dist / _GPU_RUNTIME_ASSET[: -len(".zip")]
+    info(f"압축 중… {_GPU_RUNTIME_ASSET} (수 분 걸릴 수 있음)")
+    archive = shutil.make_archive(str(base), "zip", root_dir=str(staging), base_dir="nvidia")
+    shutil.rmtree(staging)
+    return Path(archive)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--gpu",
         action="store_true",
-        help="NVIDIA CUDA 런타임을 포함한 GPU 가속 버전을 빌드한다(기본은 CPU 전용).",
+        help="(로컬/수동용) NVIDIA CUDA 런타임을 포함한 GPU 번들 폴더+zip. "
+        "배포 기본은 CPU 설치기 + GPU 온디맨드다.",
+    )
+    parser.add_argument(
+        "--gpu-runtime",
+        action="store_true",
+        help="cuBLAS 런타임 에셋 zip 만 만든다(gpu-runtime-cu12 릴리스에 올려 온디맨드로 배포).",
+    )
+    parser.add_argument(
+        "--no-installer",
+        action="store_true",
+        help="Velopack 설치기 생성을 건너뛰고 CPU 번들 폴더/zip 만 만든다.",
     )
     args = parser.parse_args()
 
@@ -224,6 +350,16 @@ def main() -> int:
 
     if target == "windows":
         ensure_windows_toolchain()
+
+    # cuBLAS 온디맨드 에셋만 만들고 끝낸다(앱 빌드와 독립).
+    if args.gpu_runtime:
+        asset = build_gpu_runtime_asset()
+        info(f"완료: GPU 런타임 에셋 {asset}  ({asset.stat().st_size / 1024 / 1024:.0f} MB)")
+        info(
+            f'업로드(한 번만): gh release create {_GPU_RUNTIME_TAG} "{asset}" '
+            f'--title "GPU runtime (cuBLAS cu12)" --notes "온디맨드 GPU 런타임"'
+        )
+        return 0
 
     # flet build 의 rich 진행표시가 이모지를 stdout 에 쓰는데 한국어 Windows 콘솔 기본
     # 코덱(cp949)으로는 인코딩 불가 → UnicodeEncodeError 로 죽는다. 자식 Python 을 UTF-8
@@ -248,10 +384,9 @@ def main() -> int:
         return d
 
     if args.gpu:
-        # GPU 번들 = CPU 번들 + nvidia 런타임. GPU 전용 flet build 를 하지 않고 CPU 산출물을
-        # 재사용한다(두 변형의 유일한 차이가 site-packages/nvidia 뿐). 이미 만든 CPU 번들이
-        # 있으면 그대로 쓰고(권장 워크플로: CPU 빌드 → --gpu 로 nvidia 만 추가), 없을 때만
-        # CPU 를 빌드한다. exe 서명은 CPU 복사로 그대로 유지된다.
+        # (로컬/수동용) GPU 번들 = CPU 번들 + nvidia 런타임. GPU 전용 flet build 를 하지 않고
+        # CPU 산출물을 재사용한다(두 변형의 유일한 차이가 site-packages/nvidia 뿐). Velopack
+        # 설치기는 CPU 기준(온디맨드 GPU)이므로 여기선 폴더+zip 만 만든다.
         cpu_dst = REPO_ROOT / "dist" / f"yke-cpu-{target}"
         if cpu_dst.exists() and any(cpu_dst.iterdir()):
             info(f"기존 CPU 번들 재사용: {cpu_dst}  (nvidia 런타임만 추가)")
@@ -260,12 +395,25 @@ def main() -> int:
             cpu_dst = build_cpu()
         dst = make_gpu_from_cpu(cpu_dst, target)
         verify_artifact(dst, target)
-    else:
-        dst = build_cpu()
+        archive = compress_bundle(dst)
+        info(f"배포 폴더: {dst}  (폴더째 배포·실행하세요)")
+        info(f"배포 압축본: {archive}  ({archive.stat().st_size / 1024 / 1024:.0f} MB)")
+        return 0
 
-    archive = compress_bundle(dst)
-    info(f"배포 폴더: {dst}  (폴더째 배포·실행하세요)")
-    info(f"배포 압축본: {archive}  ({archive.stat().st_size / 1024 / 1024:.0f} MB, GitHub Releases 업로드용)")
+    # 기본: CPU 번들 → Velopack 설치기(Windows). 다른 OS 는 폴더 zip 으로 폴백.
+    dst = build_cpu()
+    if target == "windows" and not args.no_installer:
+        version = _app_version()
+        out = velopack_pack(dst, version)
+        info(f"Velopack 산출물: {out}\\  (Setup.exe + *.nupkg + releases.win.json)")
+        info(
+            f"업로드: gh release create v{version} {out}\\*  --title v{version}  "
+            f"(또는 gh release upload v{version} {out}\\*)"
+        )
+    else:
+        archive = compress_bundle(dst)
+        info(f"배포 폴더: {dst}  (폴더째 배포·실행하세요)")
+        info(f"배포 압축본: {archive}  ({archive.stat().st_size / 1024 / 1024:.0f} MB)")
     return 0
 
 

@@ -62,6 +62,21 @@ def _sign_args() -> list[str] | None:
     return None
 
 
+def velopack_sign_params() -> str | None:
+    """Velopack ``vpk pack --signParams`` 로 넘길 signtool 인자 문자열.
+
+    vpk 는 서명 대상 파일마다 ``signtool sign <signParams> <file>`` 을 호출하므로, 인증서
+    지정 인자(:func:`_sign_args`)에 해시/타임스탬프 옵션을 붙인 문자열을 돌려준다. 인증서
+    미지정(YKE_SIGN_THUMBPRINT/PFX 없음)이면 None(=미서명). 비밀번호(/p)가 들어갈 수 있으니
+    호출 측은 이 문자열을 로그에 남기지 않는다.
+    """
+    cert_args = _sign_args()
+    if cert_args is None:
+        return None
+    timestamp_url = os.environ.get("YKE_SIGN_TIMESTAMP_URL", _DEFAULT_TIMESTAMP)
+    return " ".join([*cert_args, "/fd", "SHA256", "/tr", timestamp_url, "/td", "SHA256"])
+
+
 def sign_file(signtool: Path, target: Path, cert_args: list[str]) -> None:
     """signtool 로 파일 하나를 SHA256 + RFC3161 타임스탬프로 서명한다(실패 시 종료)."""
     timestamp_url = os.environ.get("YKE_SIGN_TIMESTAMP_URL", _DEFAULT_TIMESTAMP)
