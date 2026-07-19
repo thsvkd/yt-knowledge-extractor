@@ -273,10 +273,11 @@ def build_transcript(
         segs = [Segment(**s) for s in json.loads(vp.transcript.read_text(encoding="utf-8"))]
         return vid, meta, segs
 
-    # 트랜스크립트 소스 우선순위. 기본은 유튜브 + 업로더 제공 자막(수동 자막)을 1순위로 두고,
-    # 그 자막이 깨져 있을 때만 예외적으로 STT(AI 모델)로 폴백한다(cfg.subtitles.stt_first=False
-    # 가 기본). 자막은 채택 전에 완전성을 검증해 '깨진 자막'(예: 10분 영상에 한 줄)을 걸러
-    # 다음 소스로 넘긴다.
+    # 트랜스크립트 소스 우선순위(기본, cfg.subtitles.stt_first=False):
+    #   ① 업로더 제공 수동 자막 > ② 유튜브 자동 생성 자막 > ③ 로컬 STT(AI 모델, CPU/GPU).
+    # 로컬 STT 는 자원을 쓰는 마지막 수단이므로, 수동·자동 자막이 둘 다 없거나 깨졌을
+    # 때만 돈다. 자막은 채택 전에 완전성을 검증해 '깨진 자막'(예: 10분 영상에 한 줄)을
+    # 걸러 다음 소스로 넘긴다. stt_first=True 로 두면(레거시) STT 를 1순위로 강제한다.
     subs = cfg.subtitles
     duration = float(meta.get("duration") or 0)
 
@@ -341,7 +342,7 @@ def build_transcript(
     sources = (
         [_from_stt, _from_manual, _from_auto]
         if subs.stt_first
-        else [_from_manual, _from_stt, _from_auto]
+        else [_from_manual, _from_auto, _from_stt]
     )
     segs: list[Segment] | None = None
     for source in sources:

@@ -37,8 +37,8 @@ CLI·GUI 모두 동일한 코어(`yke.run.run_pipeline`)를 호출한다.
 | --- | --- | --- | --- |
 | 0 | 영상/채널 선정 | 개별 영상 URL 또는 채널·재생목록 URL(→ 최근 N개 자동 확장) | `config/channel.yaml`, GUI, `stage1_ingest.expand_source` |
 | 1 | 오디오 + 메타데이터 | 말 중심이므로 **오디오만**(bestaudio). 포맷 변환 안 해 시스템 ffmpeg 불필요 | `yt-dlp`, `stage1_ingest` |
-| 2 | 자막 확인 | **수동(크리에이터) 자막만 신뢰**. 자동생성 자막은 최후 폴백. 타임스탬프 보존 | `stage2_subtitles` (VTT 파싱) |
-| 3 | STT | 우선순위 **① 수동 자막 > ② faster-whisper STT > ③ 유튜브 자동자막** | `stage3_stt` (faster-whisper) |
+| 2 | 자막 확인 | **수동(크리에이터) 자막을 최우선 신뢰**. 자동생성 자막은 그다음 소스. 타임스탬프 보존 | `stage2_subtitles` (VTT 파싱) |
+| 3 | STT | 우선순위 **① 수동 자막 > ② 유튜브 자동자막 > ③ 로컬 STT(faster-whisper/Vosk)** — 자원을 쓰는 마지막 수단 | `stage3_stt` (faster-whisper), `stage3_stt_vosk` (Vosk) |
 | 4 | 텍스트 정제 | 규칙 기반 경량 정제(공백 정규화 등) | `stage4_clean` |
 | 5 | 지식 원자 단위 추출 | 서술형 요약이 아니라 **구조화 JSON**(§4) | `stage5_extract` (Claude) |
 | 6 | 영상 간 통합 | 개념 클러스터링 → 중복 제거 → 상충 플래깅 → 마크다운 | `stage6_integrate` (Claude) |
@@ -131,7 +131,7 @@ CLI는 `data_dir`(캐시)와 `output_dir`(산출물)을 분리할 수 있고, GU
 | **Diarization** | 화자 분리. 인터뷰/토크에서 중요(현재 미구현) |
 | **지식 원자 단위** | 하나의 검증 가능한 최소 지식 조각(개념+명제+type+근거+출처). 병합·중복제거가 쉬움 |
 | **할루시네이션** | LLM이 원본에 없는 내용을 생성. timestamp/quote_evidence로 완화·검증 |
-| **수동 자막 / 자동자막** | 크리에이터 제작(신뢰) / 유튜브 자동생성(낮은 품질, 최후 폴백) |
+| **수동 자막 / 자동자막** | 크리에이터 제작(1순위, 신뢰) / 유튜브 자동생성(2순위, 낮은 품질). 로컬 STT 는 둘 다 없거나 깨졌을 때만 도는 최후 폴백 |
 
 ## 10. 참고자료
 

@@ -271,7 +271,7 @@ class TestCaptionValidation(unittest.TestCase):
 
 
 class TestBuildTranscriptPriority(unittest.TestCase):
-    """build_transcript 의 소스 우선순위(수동 자막 우선, 깨진 자막만 예외적으로 STT 폴백) 검증."""
+    """build_transcript 의 소스 우선순위(수동 자막 > 유튜브 자동자막 > 로컬 STT) 검증."""
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -336,6 +336,46 @@ class TestBuildTranscriptPriority(unittest.TestCase):
             _vid, _m, segs = run.build_transcript("testvid", self._cfg(), self.data, False)
         parse.assert_called()  # 수동 자막을 시도는 했고
         self.assertEqual([s.text for s in segs], ["STT 받아쓰기 결과"])  # 깨져서 STT 로 예외 폴백
+
+    def test_no_manual_caption_prefers_auto_over_stt(self):
+        # 새 우선순위: 수동 자막이 아예 없는 영상(예: 업로더 미제공)이면, 로컬 STT 보다
+        # 먼저 유튜브 자동 생성 자막을 시도한다 — STT 는 그마저 없거나 깨졌을 때만 돈다.
+        meta = self._meta(auto_sub_lang="ko")  # manual_sub_lang 없음
+
+        def stt(audio, lang, cfg, log=print, on_progress=None, should_stop=None):
+            raise AssertionError("자동 자막이 멀쩡하면 STT 는 호출되지 않아야 함")
+
+        parse = mock.Mock(
+            return_value=[
+                Segment(start=0, end=300, text="자동 자막 앞부분"),
+                Segment(start=300, end=600, text="자동 자막 뒷부분"),
+            ]
+        )
+        with (
+            self._patched(meta, stt, parse),
+            mock.patch.object(
+                run.stage1_ingest, "download_auto_subtitle", return_value=Path("audio.ko.vtt")
+            ),
+        ):
+            _vid, _m, segs = run.build_transcript("testvid", self._cfg(), self.data, False)
+        self.assertEqual([s.text for s in segs], ["자동 자막 앞부분", "자동 자막 뒷부분"])
+
+    def test_missing_manual_and_broken_auto_falls_through_to_stt(self):
+        # 수동 자막도 없고 자동 자막마저 깨졌을 때(한 줄짜리)만 로컬 STT 가 돈다.
+        meta = self._meta(auto_sub_lang="ko")
+
+        def stt(audio, lang, cfg, log=print, on_progress=None, should_stop=None):
+            return [Segment(start=0, end=580, text="STT 받아쓰기 결과")]
+
+        parse = mock.Mock(return_value=[Segment(start=0, end=5, text="한 줄짜리 깨진 자동 자막")])
+        with (
+            self._patched(meta, stt, parse),
+            mock.patch.object(
+                run.stage1_ingest, "download_auto_subtitle", return_value=Path("audio.ko.vtt")
+            ),
+        ):
+            _vid, _m, segs = run.build_transcript("testvid", self._cfg(), self.data, False)
+        self.assertEqual([s.text for s in segs], ["STT 받아쓰기 결과"])
 
     def test_explicit_stt_first_uses_stt_and_skips_captions(self):
         # stt_first=True 로 명시하면(레거시 옵션) 여전히 STT 를 1순위로 쓸 수 있다.
