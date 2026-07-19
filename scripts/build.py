@@ -15,9 +15,9 @@ CPU / GPU 차이:
     빌드한다. GPU 번들이라도 GPU 가 없으면 앱이 자동으로 CPU(int8)로 폴백한다.
     (cuDNN 은 ctranslate2 가 자체 번들하므로 nvidia-cudnn-cu12 는 넣지 않는다 - 실측 확인.)
 
-    구현: flet build 는 [project.dependencies] 만 번들 requirements 로 쓰므로(optional
-    extra 무시), --gpu 일 때 빌드 동안만 pyproject 의 dependencies 에 cuBLAS 를 주입하고
-    끝나면 원본으로 복원한다.
+    구현: GPU 전용 flet build 를 따로 하지 않는다. CPU 를 한 번 빌드한 뒤 그 산출물을 복사하고
+    site-packages 에 cuBLAS 런타임만 얹어 GPU 번들을 만든다(두 변형의 유일한 차이가 nvidia
+    뿐이라 안전하고, GPU 빌드가 수 분 → 수십 초로 준다). CPU 번들이 이미 있으면 재사용한다.
 
 사전 준비:
     - Windows: Visual Studio "Desktop development with C++" 워크로드(없으면 안내).
@@ -40,7 +40,6 @@ from sign import maybe_sign_bundle
 _PRODUCT = "YouTube Knowledge Extractor"
 _ORG = "com.thsvkd"
 
-_PYPROJECT = REPO_ROOT / "pyproject.toml"
 # GPU 빌드에서 번들에 추가할 CUDA 런타임. ctranslate2 4.8 은 cuDNN 로더(cudnn64_9.dll)를
 # 자체 번들하고 whisper 추론에 cuDNN 서브라이브러리를 쓰지 않으므로(RTX 2080 실측 확인:
 # nvidia-cudnn 제거 후에도 GPU 추론 성공), cuBLAS 만 필요하다. nvidia-cudnn-cu12(약 1.1GB)는
@@ -133,16 +132,6 @@ def ensure_windows_toolchain() -> None:
     )
 
 
-# -- pyproject 임시 편집(GPU deps 주입) --------------------------------------
-def _inject_gpu_deps(original: str) -> str:
-    """[project.dependencies] 배열 맨 앞에 GPU CUDA 런타임 패키지를 끼워 넣는다."""
-    marker = "dependencies = [\n"
-    if marker not in original:
-        fail("pyproject.toml 의 dependencies 배열을 찾지 못했습니다.")
-    inject = "".join(f'    "{d}",\n' for d in _GPU_DEPS)
-    return original.replace(marker, marker + inject, 1)
-
-
 # -- 결과물 정리/검증 --------------------------------------------------------
 def stash_output(target: str, variant: str) -> Path:
     """flet build 결과(build/<target>)를 변형별 배포 폴더로 옮긴다."""
@@ -181,6 +170,46 @@ def compress_bundle(dst: Path) -> Path:
     return Path(archive)
 
 
+def make_gpu_from_cpu(cpu_dst: Path, target: str) -> Path:
+    """CPU 배포 폴더를 복사한 뒤 NVIDIA CUDA 런타임(cuBLAS/nvrtc) DLL 만 얹어 GPU 번들을 만든다.
+
+    두 변형의 유일한 차이는 ``site-packages/nvidia`` 뿐이므로 GPU 전용 flet build 를 생략하고
+    CPU 산출물을 그대로 재사용한다(GPU 빌드가 수 분 → 수십 초로 줄고, CPU 와 앱 코드가 100%
+    동일함이 보장된다). CPU exe 서명도 복사로 그대로 유지된다. nvidia 런타임은 임시 target 에
+    설치해 nvidia 패키지 디렉터리만 골라 옮긴다.
+    """
+    gpu_dst = REPO_ROOT / "dist" / f"yke-gpu-{target}"
+    if gpu_dst.exists():
+        shutil.rmtree(gpu_dst)
+    info(f"CPU 번들 복사 → {gpu_dst.name}")
+    shutil.copytree(cpu_dst, gpu_dst)
+    site = gpu_dst / "site-packages"
+    if not site.exists():
+        fail(f"CPU 번들에 site-packages 가 없습니다: {site}")
+
+    staging = REPO_ROOT / "build" / "_gpu_deps"
+    if staging.exists():
+        shutil.rmtree(staging)
+    info(f"NVIDIA CUDA 런타임 설치(임시): {', '.join(_GPU_DEPS)}")
+    check(["uv", "pip", "install", "--target", str(staging), *_GPU_DEPS])
+    # nvidia 패키지(런타임 폴더 + dist-info)만 번들 site-packages 로 옮긴다.
+    moved = [
+        item.name
+        for item in sorted(staging.iterdir())
+        if item.name == "nvidia" or item.name.startswith("nvidia_")
+    ]
+    for name in moved:
+        src, dest = staging / name, site / name
+        if dest.exists():
+            shutil.rmtree(dest) if dest.is_dir() else dest.unlink()
+        shutil.move(str(src), str(dest))
+    shutil.rmtree(staging)
+    if not moved:
+        fail("nvidia 런타임 패키지를 찾지 못했습니다(설치 실패?).")
+    info(f"nvidia 런타임 추가 완료: {', '.join(moved)}")
+    return gpu_dst
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -192,7 +221,6 @@ def main() -> int:
 
     require_uv()
     target = _target()
-    variant = "gpu" if args.gpu else "cpu"
 
     if target == "windows":
         ensure_windows_toolchain()
@@ -202,37 +230,39 @@ def main() -> int:
     # 모드로 강제해 회피한다(다른 OS 엔 무해).
     build_env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
 
-    info("의존성 동기화 (uv sync)")
-    check(["uv", "sync"])
-
-    # 원본을 바이트로 보존한다. write_text 는 Windows 에서 \n→\r\n 으로 바꿔 원복 시
-    # 줄바꿈만 달라지고 git 이 변경으로 오인한다. 바이트 라운드트립으로 정확히 되돌린다.
-    original_bytes = _PYPROJECT.read_bytes()
-    if args.gpu:
-        info("GPU 빌드: pyproject 에 CUDA 런타임을 임시 주입")
-        injected = _inject_gpu_deps(original_bytes.decode("utf-8"))
-        _PYPROJECT.write_bytes(injected.encode("utf-8"))
-
-    try:
-        info(f"flet build {target} ({variant})")
-        # --no-sync: 방금 주입한 pyproject 로 uv 가 dev venv 를 재동기화하지 않게 한다
-        # (GPU 패키지는 번들에만 필요하고 개발 환경엔 넣지 않는다).
+    def build_cpu() -> Path:
+        """flet build 로 CPU 번들을 만들고(검증·서명 포함) 배포 폴더를 돌려준다."""
+        info("의존성 동기화 (uv sync)")
+        check(["uv", "sync"])
+        info(f"flet build {target} (cpu)")
         check(
             ["uv", "run", "--no-sync", "flet", "build", target,
              "--product", _PRODUCT, "--org", _ORG],
             env=build_env,
         )
-    finally:
-        if args.gpu:
-            _PYPROJECT.write_bytes(original_bytes)
-            info("pyproject 원복 완료")
+        d = stash_output(target, "cpu")
+        verify_artifact(d, target)
+        # 앱 exe 서명(YKE_SIGN_THUMBPRINT/YKE_SIGN_PFX 설정 시). 인증서 미지정이면 미서명.
+        if target == "windows":
+            maybe_sign_bundle(d)
+        return d
 
-    dst = stash_output(target, variant)
-    verify_artifact(dst, target)
-    # 앱 exe 서명(YKE_SIGN_THUMBPRINT/YKE_SIGN_PFX 설정 시). 압축 전에 해야 zip 에 서명본이
-    # 담긴다. 인증서 미지정이면 건너뛰고 미서명으로 진행한다.
-    if target == "windows":
-        maybe_sign_bundle(dst)
+    if args.gpu:
+        # GPU 번들 = CPU 번들 + nvidia 런타임. GPU 전용 flet build 를 하지 않고 CPU 산출물을
+        # 재사용한다(두 변형의 유일한 차이가 site-packages/nvidia 뿐). 이미 만든 CPU 번들이
+        # 있으면 그대로 쓰고(권장 워크플로: CPU 빌드 → --gpu 로 nvidia 만 추가), 없을 때만
+        # CPU 를 빌드한다. exe 서명은 CPU 복사로 그대로 유지된다.
+        cpu_dst = REPO_ROOT / "dist" / f"yke-cpu-{target}"
+        if cpu_dst.exists() and any(cpu_dst.iterdir()):
+            info(f"기존 CPU 번들 재사용: {cpu_dst}  (nvidia 런타임만 추가)")
+        else:
+            info("GPU 빌드에 쓸 CPU 번들이 없어 먼저 CPU 를 빌드합니다.")
+            cpu_dst = build_cpu()
+        dst = make_gpu_from_cpu(cpu_dst, target)
+        verify_artifact(dst, target)
+    else:
+        dst = build_cpu()
+
     archive = compress_bundle(dst)
     info(f"배포 폴더: {dst}  (폴더째 배포·실행하세요)")
     info(f"배포 압축본: {archive}  ({archive.stat().st_size / 1024 / 1024:.0f} MB, GitHub Releases 업로드용)")
