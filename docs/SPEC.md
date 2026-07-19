@@ -113,13 +113,19 @@ CLI는 `data_dir`(캐시)와 `output_dir`(산출물)을 분리할 수 있고, GU
   subprocess 로 호출한다(`src/yke/llm/claude_client.py`). 인증은 CLI 자체의 로그인 상태
   (`claude login`)를 그대로 쓰므로 앱이 토큰을 저장·주입하지 않는다. CLI 를 PATH 에서 찾지
   못하면 `ClaudeClient` 생성 시점에 안내 메시지와 함께 실패한다.
-- **빌드**: `scripts/build.py [--gpu]` → `dist/yke-<cpu|gpu>-<platform>/` 폴더 번들 +
-  `.zip`. GPU 변형은 **cuBLAS만** 포함한다(ctranslate2가 cuDNN 로더를 자체 번들하고
-  whisper 추론에 cuDNN 서브라이브러리를 쓰지 않음 — 실측 확인). CPU≈419MB, GPU≈1.4GB(zip 752MB).
-- **자체 업데이트**: GitHub Releases 기반 커스텀 사이드카. 최신 릴리스 감지 → 변형/플랫폼에
-  맞는 에셋 선택 → 다운로드 + **SHA256 검증(GitHub digest 대조)** → 번들 밖 사이드카 스크립트가
-  앱 종료 대기 후 폴더 스왑(롤백 포함) 후 재실행. GUI에서 시작 시 자동 확인 + 수동 버튼.
-  배포 전 `updater.REPO_OWNER/REPO_NAME`을 실제 public 레포로 지정해야 한다.
+- **빌드**: `scripts/build.py` → CPU flet 번들 + **Velopack 설치기**(`dist/velopack/`: Setup.exe,
+  `*-full/delta.nupkg`, `releases.win.json`). GPU 는 설치본에 넣지 않고 **온디맨드**로 받는다:
+  `--gpu-runtime` 으로 cuBLAS 런타임 zip 을 만들어 `gpu-runtime-cu12` 릴리스에 올려 두고, 앱이
+  NVIDIA 감지 시 `%LocalAppData%\…\gpu-runtime`(current\ 밖, 업데이트에도 유지)으로 내려받아
+  STT 를 GPU 로 돌린다(`src/yke/gpu_runtime.py`, `stage3_stt._register_cuda_dll_dirs`). ctranslate2
+  가 cuDNN 로더를 자체 번들하므로 cuBLAS 만 받으면 된다(실측 확인). CPU 설치기≈160MB.
+- **설치 · 자체 업데이트**: [Velopack](https://velopack.io)(Squirrel 후속) 사용. 설치본은
+  `%LocalAppData%\YtKnowledgeExtractor\current\` **고정 경로**(OneDrive 로 리다이렉트된 폴더 경합
+  회피)에 놓이고, GitHub Releases 의 `releases.win.json` + nupkg(**델타 우선**)로 갱신한다. 진입점
+  (`src/main.py`)에서 `velopack.App().run()` 으로 설치/업데이트 라이프사이클 훅을 처리하고, GUI
+  (`src/yke/velopack_update.py` 래퍼)가 시작 시 자동 확인 + 수동 버튼으로 `UpdateManager` 를
+  호출한다. 서명(YKE_SIGN_THUMBPRINT/PFX)은 Velopack 이 전 파일에 적용한다. (기존 커스텀 사이드카
+  updater 는 Velopack 으로 대체됨.)
 
 ## 8. 미해결 이슈 / 향후 과제
 
@@ -128,7 +134,7 @@ CLI는 `data_dir`(캐시)와 `output_dir`(산출물)을 분리할 수 있고, GU
 3. **5단계 프롬프트 설계**: type 분류 정확도, concept 명명 일관성 검증.
 4. **6단계 통합 알고리즘**: 순수 LLM vs 임베딩 유사도 클러스터링 후 LLM 정제 — 스케일업 시 재검토.
 5. **대상 채널/카테고리**: 아직 미특정.
-6. **자체 업데이트 end-to-end**: public 레포 + 릴리스 2개 이상으로 실측 필요(현재 순수 로직만 단위 테스트).
+6. **자체 업데이트 실배포 검증**: Velopack 설치·델타 업데이트·재시작은 로컬 릴리스로 실측 완료(PoC). GitHub 릴리스에 실제 업로드 후 end-to-end(설치본 → 새 릴리스 감지 → 델타 적용) 최종 확인은 첫 실배포 시 수행.
 
 ## 9. 용어
 

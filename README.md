@@ -17,8 +17,8 @@
 - **검증 가능성** — 모든 항목에 타임스탬프와 원문 인용이 포함되어 원본과 대조할 수 있습니다.
 - **사실/의견 구분** — 각 항목을 사실·의견·팁·정의로 분류합니다.
 - **자막 부재 시 STT 대체** — 수동·자동 자막이 모두 없거나 깨졌을 때만 로컬 음성인식(faster-whisper, 또는 완전 오프라인 경량 엔진 Vosk)으로 전사합니다.
-- **설치 불필요** — 압축 해제 후 바로 실행하는 Windows 데스크톱 앱입니다(전체 지식 위키 생성에는 [Claude Code CLI](https://claude.com/claude-code) 설치가 필요합니다).
-- **자동 업데이트** — 새 버전 출시 시 앱 내에서 갱신합니다.
+- **원클릭 설치** — 설치기(Setup.exe) 하나로 관리자 권한 없이 설치됩니다. NVIDIA GPU 가속은 별도 버전이 아니라 앱에서 필요할 때 켭니다(전체 지식 위키 생성에는 [Claude Code CLI](https://claude.com/claude-code) 설치가 필요합니다).
+- **자동 업데이트** — 새 버전은 앱 내에서 바뀐 부분만 받아 자동 갱신됩니다.
 
 ---
 
@@ -30,28 +30,27 @@
 
 ### 1. 다운로드
 
-[최신 릴리스](https://github.com/thsvkd/yt-knowledge-extractor/releases/latest)에서 환경에 맞는 파일을 받습니다.
+[최신 릴리스](https://github.com/thsvkd/yt-knowledge-extractor/releases/latest)에서 설치기 하나를 받습니다.
 
 | 파일 | 대상 | 크기 |
 | --- | --- | --- |
-| **`yke-cpu-windows.zip`** | NVIDIA GPU가 없거나 확실하지 않은 경우. 대부분 이 버전을 사용합니다. | ~145 MB |
-| **`yke-gpu-windows.zip`** | **NVIDIA GPU(CUDA)**를 사용해 음성인식을 가속하려는 경우. | ~745 MB |
+| **`YtKnowledgeExtractor-win-Setup.exe`** | 모든 Windows 사용자. 설치 후 자동 업데이트됩니다. | ~160 MB |
 
 > [!TIP]
-> GPU 버전은 음성인식 **속도**만 다를 뿐 결과물 품질은 동일합니다. GPU 버전도 GPU가
-> 없으면 자동으로 CPU로 동작하므로, 확실하지 않으면 CPU 버전을 권장합니다.
+> **NVIDIA GPU 가속**은 별도 버전이 아니라, 설치 후 앱의 **고급 옵션 → GPU 가속 다운로드**에서
+> 켭니다(그때 cuBLAS 런타임 ~900MB를 한 번만 받습니다). GPU 가속은 음성인식 **속도**만 다를 뿐
+> 결과물 품질은 동일하며, NVIDIA GPU가 없으면 자동으로 CPU로 동작합니다.
 
-### 2. 압축 해제 후 실행
+### 2. 설치
 
-1. 받은 `.zip`을 압축 해제합니다.
-2. 폴더 안의 `.exe`(또는 `실행.bat`)를 실행합니다.
+1. 받은 `YtKnowledgeExtractor-win-Setup.exe`를 실행합니다. 사용자 폴더(`%LocalAppData%`)에
+   설치되고 바탕화면·시작 메뉴 바로가기가 생성됩니다(관리자 권한 불필요). 설치가 끝나면
+   앱이 자동으로 실행됩니다.
 
 > [!IMPORTANT]
-> - 폴더에는 실행에 필요한 파일이 함께 들어 있습니다. `.exe`나 `실행.bat`만 분리하지 말고
->   **폴더째** 유지하십시오.
-> - 최초 실행 시 *"Windows의 PC 보호"* 창이 표시되면 **추가 정보 → 실행**을 선택하십시오.
->   코드 서명이 없는 개인 배포본에서 발생하는 정상적인 경고입니다.
-> - 실행 시 `PathNotFoundException` 오류로 앱이 뜨지 않으면 Windows 보안의 **제어된 폴더
+> - 최초 실행 시 *"Windows의 PC 보호"* 창이 표시되면 **추가 정보 → 실행**을 선택하십시오. 정식
+>   CA가 아닌 개인(self-signed) 서명이라 나타나는 정상 경고이며, 이후 자동 업데이트에는 뜨지 않습니다.
+> - 드물게 `PathNotFoundException` 오류로 앱이 뜨지 않으면 Windows 보안의 **제어된 폴더
 >   액세스** 때문일 수 있습니다. 아래 [자주 묻는 질문](#자주-묻는-질문)을 참고하십시오.
 
 ### 3. Claude Code CLI 준비 (선택)
@@ -144,19 +143,15 @@ CLI 없이 전사 단계만 먼저 실행해 결과를 확인한 뒤, 전체 위
 
 <br>
 
-코드 서명이 없는 개인 배포본에서 발생하는 **SmartScreen 평판 경고**입니다(바이러스로
-격리된 것이 아닙니다). 다음 중 하나로 실행할 수 있습니다.
+정식 CA가 아닌 개인(self-signed) 서명 배포본에서 발생하는 **SmartScreen 평판 경고**입니다
+(바이러스로 격리된 것이 아닙니다). 다음 중 하나로 실행할 수 있습니다.
 
 - *"Windows의 PC 보호"* 창에서 **추가 정보 → 실행**.
-- 또는 다운로드 표식을 제거합니다. 받은 `.zip`(또는 `.exe`)을 **우클릭 → 속성 → 하단의
-  "차단 해제" 체크 → 확인**. PowerShell로는 압축을 푼 폴더에서:
+- 또는 받은 `Setup.exe`를 **우클릭 → 속성 → 하단의 "차단 해제" 체크 → 확인** 후 실행.
 
-  ```powershell
-  Get-ChildItem <폴더> -Recurse | Unblock-File
-  ```
-
-> 참고: 앱 내 **자동 업데이트**로 받는 새 버전에는 이 경고가 뜨지 않습니다(프로그램이
-> 직접 내려받아 다운로드 표식이 붙지 않기 때문). 즉 위 절차는 **최초 1회 설치에만** 필요합니다.
+> 참고: 설치는 사용자 폴더(`%LocalAppData%`)에 이뤄지며, 앱 내 **자동 업데이트**로 받는 새
+> 버전에는 이 경고가 뜨지 않습니다(프로그램이 직접 내려받아 다운로드 표식이 붙지 않기 때문).
+> 즉 위 절차는 **최초 1회 설치에만** 필요합니다.
 
 </details>
 
@@ -263,28 +258,30 @@ uv run yke --force                # 캐시 무시 후 재생성
 uv run yke --limit 5              # 채널/재생목록에서 최근 5개만
 ```
 
-**빌드 (네이티브 데스크톱 앱)**
+**빌드 (네이티브 데스크톱 앱 + 설치기)**
 
-실행 OS를 감지해 flet 네이티브 앱을 빌드합니다(Windows/macOS/Linux 공통).
+실행 OS를 감지해 flet 네이티브 앱을 빌드하고, Windows에서는 [Velopack](https://velopack.io) 설치기까지 만듭니다.
 
 ```bash
-python scripts/build.py         # CPU 전용 버전
-python scripts/build.py --gpu   # NVIDIA CUDA 가속 버전
+python scripts/build.py                 # CPU 번들 → Velopack 설치기(dist/velopack/)
+python scripts/build.py --gpu-runtime   # cuBLAS 온디맨드 에셋 zip(GPU 가속 배포용)
+python scripts/build.py --no-installer  # CPU 번들 폴더/zip 만(설치기 생략)
 ```
 
-- 결과물: `dist/yke-<cpu|gpu>-<platform>/` — 실행 파일 + DLL + `data/` 한 세트. **폴더째** 배포·실행합니다. 압축본 `dist/yke-<cpu|gpu>-<platform>.zip`은 GitHub Releases 업로드용입니다.
-- GPU 변형은 STT(faster-whisper→CTranslate2) 가속에 필요한 `nvidia-cublas-cu12` 런타임을 번들에 포함합니다(빌드 중에만 `[project.dependencies]`에 임시 주입). CPU 전용은 이를 제외해 더 가볍게 빌드합니다. GPU 번들도 GPU가 없으면 자동으로 CPU(int8)로 폴백합니다.
-- 사전 준비(Windows): Visual Studio "Desktop development with C++" 워크로드가 필요합니다(없으면 스크립트가 설치 방법을 안내). Flutter SDK는 `flet build`가 필요 시 자동으로 다운로드합니다.
+- 결과물(기본): `dist/velopack/` — `YtKnowledgeExtractor-win-Setup.exe`(설치기) + `*-full/delta.nupkg`(업데이트 패키지) + `releases.win.json`(매니페스트). 이 폴더 **전체**를 GitHub 릴리스에 올리면 앱이 자동 업데이트(변경분만 받는 **델타** 포함)에 사용합니다.
+- **GPU는 온디맨드**: CPU 설치기에는 cuBLAS를 넣지 않습니다(가볍게). NVIDIA 사용자는 앱의 **고급 옵션 → GPU 가속 다운로드**로 cuBLAS 런타임을 받습니다. 이 런타임 zip은 `--gpu-runtime`으로 만들어 `gpu-runtime-cu12` 릴리스에 한 번 올려 둡니다(앱 버전과 무관). GPU가 없으면 앱이 자동으로 CPU(int8)로 폴백합니다.
+- 사전 준비(Windows): Visual Studio "Desktop development with C++" 워크로드 + [Velopack CLI](https://velopack.io)(`dotnet tool install -g vpk`)가 필요합니다. Flutter SDK는 `flet build`가 필요 시 자동으로 다운로드합니다.
 
 **코드 서명 (선택, Windows)**
 
 미서명 배포본은 SmartScreen 경고가 뜹니다(위 [자주 묻는 질문](#자주-묻는-질문) 참고). 서명하면
-게시자 이름이 표시되고, 정식 CA 인증서면 경고도 사라집니다.
+게시자 이름이 표시되고, 정식 CA 인증서면 경고도 사라집니다. 지문을 지정하면 **Velopack이
+설치기와 앱 번들 전체 파일을 서명**합니다.
 
 ```bash
 # 1) self-signed 인증서 생성(한 번). 출력된 지문(Thumbprint)을 복사합니다.
 pwsh -File scripts/make_selfsigned_cert.ps1
-# 2) 지문을 환경 변수로 지정하고 빌드하면 앱 exe 가 자동 서명됩니다(PowerShell).
+# 2) 지문을 환경 변수로 지정하고 빌드하면 Velopack 이 전 파일을 자동 서명합니다(PowerShell).
 $env:YKE_SIGN_THUMBPRINT = "<복사한 지문>"
 python scripts/build.py
 ```

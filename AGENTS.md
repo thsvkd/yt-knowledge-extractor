@@ -8,7 +8,7 @@
 
 - 환경 구성: `python scripts/setup.py` (base + vosk extra 포함. GPU STT 가속: `python scripts/setup.py --gpu`)
 - 앱 실행: `python scripts/run.py` (GUI) / `python scripts/run.py --cli [옵션]` (CLI, 뒤 인자는 `yke` 로 전달)
-- 빌드/배포: `python scripts/build.py` (CPU) / `python scripts/build.py --gpu` (GPU). 결과: `dist/yke-<cpu|gpu>-<platform>/`
+- 빌드/배포: `python scripts/build.py` → CPU flet 번들 + **Velopack 설치기**(`dist/velopack/`). GPU 는 온디맨드(`--gpu-runtime` 으로 cuBLAS 에셋 zip). 설치·자동업데이트는 Velopack(`src/yke/velopack_update.py`), GPU 온디맨드는 `src/yke/gpu_runtime.py`.
 - 테스트: `python scripts/test.py` (뒤 인자는 그대로 `pytest` 로 전달)
 
 직접 실행(래퍼가 감싸는 원 명령):
