@@ -22,7 +22,7 @@ from pathlib import Path
 
 import flet as ft
 
-from . import __version__, velopack_update
+from . import __version__, gpu_runtime, velopack_update
 from .config import Config, LLMConfig, load_config
 from .llm.claude_client import is_available as _claude_cli_available
 from .run import Progress, PipelineResult, run_pipeline, _fmt_hms
@@ -169,6 +169,8 @@ class PipelineGUI:
         self.page.run_task(self._ui_ticker)
         # 시작 시 새 버전을 조용히 확인한다(네트워크/레포 미공개 실패는 무시).
         self.page.run_thread(self._auto_check_updates)
+        # GPU 가속 가능 여부(NVIDIA 감지 + cuBLAS 유무)를 백그라운드에서 확인해 UI 를 채운다.
+        self.page.run_thread(self._refresh_gpu_status)
 
     # -- UI 구성 ---------------------------------------------------------
     def _build(self) -> None:
@@ -300,6 +302,18 @@ class PipelineGUI:
         )
         self.update_status = ft.Text(f"현재 버전 v{__version__}", size=12, color=_muted_color)
 
+        # GPU 가속(cuBLAS 온디맨드): NVIDIA GPU 가 있으면 런타임(~900MB)을 받아 STT 를 GPU 로
+        # 돌린다. CPU 설치본은 cuBLAS 를 포함하지 않으므로 이 버튼으로 필요할 때만 받는다.
+        # 상태/버튼은 시작 시 백그라운드에서 채운다(ctranslate2 로드가 무거워 메인 스레드
+        # 기동을 늦추지 않도록). 다운로드 전에는 버튼이, 이미 있으면 상태만 보인다.
+        self.gpu_status = ft.Text("GPU 가속: 확인 중…", size=12, color=_muted_color)
+        self.gpu_btn = ft.Button(
+            "GPU 가속 다운로드",
+            icon=ft.Icons.BOLT,
+            visible=False,
+            on_click=lambda _e: self._on_gpu_download(),
+        )
+
         advanced = ft.ExpansionTile(
             title=ft.Text("고급 옵션"),
             controls=[
@@ -319,6 +333,12 @@ class PipelineGUI:
                             self.cred_status,
                             self.force_cb,
                             self.force_local_stt_cb,
+                            ft.Row(
+                                [self.gpu_btn, self.gpu_status],
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                spacing=12,
+                                wrap=True,
+                            ),
                             ft.Divider(),
                             ft.Row(
                                 [self.update_btn, self.update_status],
@@ -678,6 +698,63 @@ class PipelineGUI:
         self.update_status.value = message
         self.update_status.color = color
         self._safe_update(self.update_status)
+
+    # -- GPU 가속(cuBLAS 온디맨드) ---------------------------------------
+    def _refresh_gpu_status(self) -> None:
+        """NVIDIA GPU 유무·cuBLAS 설치 여부로 GPU 가속 상태/버튼을 갱신한다(백그라운드).
+
+        ctranslate2 로드가 무거워 시작 스레드를 늦추지 않도록 워커에서 호출한다.
+        """
+        try:
+            has_gpu = gpu_runtime.cuda_available()
+            ready = gpu_runtime.cublas_present()
+        except Exception:
+            logger.debug("GPU 상태 확인 실패", exc_info=True)
+            return
+        if not has_gpu:
+            self.gpu_status.value = "GPU 가속: NVIDIA GPU 미감지 — CPU 로 동작합니다"
+            self.gpu_status.color = self._muted_color
+            self.gpu_btn.visible = False
+        elif ready:
+            self.gpu_status.value = "GPU 가속: 준비됨 ✓ (cuBLAS 설치됨)"
+            self.gpu_status.color = ft.Colors.GREEN
+            self.gpu_btn.visible = False
+        else:
+            self.gpu_status.value = "GPU 가속: NVIDIA GPU 감지됨 — cuBLAS 런타임(~900MB)을 받으세요"
+            self.gpu_status.color = None
+            self.gpu_btn.visible = True
+        self._safe_update(self.gpu_status)
+        self._safe_update(self.gpu_btn)
+
+    def _on_gpu_download(self) -> None:
+        self.gpu_btn.disabled = True
+        self._safe_update(self.gpu_btn)
+        self.page.run_thread(self._gpu_download)
+
+    def _gpu_download(self) -> None:
+        try:
+            self.gpu_status.value = "GPU 런타임 다운로드 중… 0%"
+            self.gpu_status.color = None
+            self._safe_update(self.gpu_status)
+            gpu_runtime.download(progress_cb=self._gpu_progress)
+        except Exception as exc:
+            logger.error("GPU 런타임 다운로드 실패", exc_info=True)
+            self.gpu_status.value = f"GPU 런타임 다운로드 실패: {exc}"
+            self.gpu_status.color = ft.Colors.RED
+            self.gpu_btn.disabled = False
+            self._safe_update(self.gpu_status)
+            self._safe_update(self.gpu_btn)
+            return
+        # 이미 로드된 모델 캐시는 CPU 로 만들어졌을 수 있으므로, 안내는 '다음 실행부터'로 둔다.
+        self.gpu_status.value = "GPU 가속: 준비됨 ✓ (다음 실행부터 GPU 로 변환)"
+        self.gpu_status.color = ft.Colors.GREEN
+        self.gpu_btn.visible = False
+        self._safe_update(self.gpu_status)
+        self._safe_update(self.gpu_btn)
+
+    def _gpu_progress(self, frac: float) -> None:
+        self.gpu_status.value = f"GPU 런타임 다운로드 중… {int(frac * 100)}%"
+        self._safe_update(self.gpu_status)
 
     # -- 실행 검증 & 시작 ------------------------------------------------
     def _urls(self) -> list[str]:
