@@ -76,16 +76,23 @@ STT 시장 참고(2026 기준): 영어권은 Whisper large-v3·상용 API가 강
 ## 5. 산출물
 
 ```
-<저장 폴더>/<video_id>/
+<저장 폴더>/[<채널·재생목록 슬러그>/]<video_id>/
   meta.json         # 제목/설명/업로드일/챕터 등
   audio.*           # 다운로드 오디오
-  audio.<lang>.vtt  # 수동 자막(있는 경우)
   transcript.json   # 정제된 세그먼트 (start/end/text)
   units.json        # 지식 원자 단위
-<저장 폴더>/
+<저장 폴더>/[<채널·재생목록 슬러그>/]
   clusters.json     # 통합 개념 클러스터 (구조화)
   wiki.md           # 최종 지식베이스 (사람 검토 대상)
 ```
+
+`audio.<lang>.vtt`(수동/자동 자막)는 `transcript.json`으로 파싱된 뒤 삭제되어 영속
+산출물에 포함되지 않는다(재실행 시 `transcript.json` 캐시 히트로 다시 읽지 않음).
+
+채널·재생목록 URL 입력 시 그 채널·재생목록 전용 하위 폴더(핸들/이름/재생목록 ID 기반
+슬러그, `utils.channel_folder_slug`)로 `data_dir`·`out_dir` 모두 정리해, 여러 채널을
+반복 처리해도 캐시·산출물이 뒤섞이지 않는다. 개별 영상 URL만 있으면 기존처럼 저장 폴더에
+바로 정리한다.
 
 CLI는 `data_dir`(캐시)와 `output_dir`(산출물)을 분리할 수 있고, GUI는 **하나의 저장
 폴더**로 통일해 캐시와 `wiki.md`를 같은 곳에 둔다.
@@ -97,7 +104,8 @@ CLI는 `data_dir`(캐시)와 `output_dir`(산출물)을 분리할 수 있고, GU
 - **CLI** (`yke`): `--stage transcript|extract|integrate|all`, `--stt-model`, `--limit`, `--force`.
 - **GUI** (`yke-gui`, flet 데스크톱): 영상/채널 URL 입력(+ 최근 N개), 실행 단계 2종
   (`전체(지식 문서화까지)` / `스크립트 추출까지`(기본) — 후자 선택 시 언어 모델 UI 비활성화),
-  스크립트 변환 모델·GPU 가속·언어 모델 선택, 진행바·로그·중단, 산출물 열기.
+  STT 엔진(faster-whisper/Vosk)·스크립트 변환 모델·GPU 가속·언어 모델 선택, 자막 무시 후
+  로컬 STT 강제 옵션, 진행바(단계/하위단계 실시간 타임라인 포함)·로그·중단, 산출물 열기.
 
 ## 7. 자격증명 · 배포 · 자체 업데이트
 

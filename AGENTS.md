@@ -6,16 +6,17 @@
 
 편의 스크립트(아래 `uv`/`flet` 명령을 감싼 얇은 래퍼, 모두 `--help` 지원):
 
-- 환경 구성: `python scripts/setup.py` (GPU STT 가속: `python scripts/setup.py --gpu`)
+- 환경 구성: `python scripts/setup.py` (base + vosk extra 포함. GPU STT 가속: `python scripts/setup.py --gpu`)
 - 앱 실행: `python scripts/run.py` (GUI) / `python scripts/run.py --cli [옵션]` (CLI, 뒤 인자는 `yke` 로 전달)
 - 빌드/배포: `python scripts/build.py` (CPU) / `python scripts/build.py --gpu` (GPU). 결과: `dist/yke-<cpu|gpu>-<platform>/`
+- 테스트: `python scripts/test.py` (뒤 인자는 그대로 `pytest` 로 전달)
 
 직접 실행(래퍼가 감싸는 원 명령):
 
-- 설치: `uv sync` (GPU STT 가속: `uv sync --extra gpu`)
+- 설치: `uv sync --extra vosk` (GPU STT 가속 추가: `uv sync --extra vosk --extra gpu`)
 - 실행(CLI): `uv run yke` (옵션: `--stage transcript|extract|integrate|all`, `--stt-model <name>`, `--limit N`, `--force`)
 - 실행(GUI): `uv run yke-gui` (flet 데스크톱; CLI 와 동일한 `run_pipeline` 코어 재사용)
-- 테스트: `uv run python -m unittest discover -s tests -t .`
+- 테스트: `uv run pytest tests/`
 
 ## 정의
 
