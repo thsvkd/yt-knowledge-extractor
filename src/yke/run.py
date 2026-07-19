@@ -39,7 +39,7 @@ from .pipeline import (
     stage5_extract,
     stage6_integrate,
 )
-from .utils import StoppedError, is_channel_or_playlist_url
+from .utils import StoppedError, channel_folder_slug, is_channel_or_playlist_url
 
 _YT_ID = re.compile(r"(?:v=|youtu\.be/|/shorts/|/embed/)([\w-]{11})")
 
@@ -107,6 +107,10 @@ class Progress:
     # 있으면 GUI 진행바는 (done + sub_progress) / total 로 계산해, "몇 번째 영상"
     # 뿐 아니라 "그 영상의 어디까지" 도 촘촘히 반영한다.
     sub_progress: float | None = None
+    # phase="transcript" 내부의 세부 단계: resolve(채널/재생목록 분석) | ingest(오디오·메타)
+    # | subtitles(자막 확인) | stt(STT 변환) | clean(텍스트 정제). GUI 가 트랜스크립트 단계
+    # 동안 "지금 뭘 하고 있는지" 를 보여주는 하위 타임라인에 쓴다.
+    substep: str | None = None
 
 
 @dataclass
@@ -116,6 +120,9 @@ class PipelineResult:
     video_count: int = 0
     unit_count: int = 0
     concept_count: int = 0
+    # 이번 실행이 실제로 산출물을 쓴 폴더(채널/재생목록 입력이면 그 하위 폴더로 정리됐을 수
+    # 있음). GUI 의 '저장 폴더 열기' 가 실행 전 추정치 대신 이 값을 우선한다.
+    out_dir: Path | None = None
     wiki_path: Path | None = None
     clusters_path: Path | None = None
     failures: list[str] = field(default_factory=list)
@@ -167,6 +174,7 @@ def _make_stt_progress_reporter(
                     f"{_fmt_hms(done_s)} / {_fmt_hms(total_s)} ({frac:.0%}) — {url}"
                 ),
                 phase="transcript",
+                substep="stt",
                 done=video_index - 1,
                 total=total_videos,
                 transient=True,
@@ -200,6 +208,7 @@ def _resolve_sources(
             Progress(
                 message=f"채널/재생목록 분석 중… {src}",
                 phase="transcript",
+                substep="resolve",
                 indeterminate=True,
                 transient=True,
             )
@@ -208,7 +217,7 @@ def _resolve_sources(
             found = stage1_ingest.expand_source(
                 src,
                 channel_limit,
-                log=lambda m: on_progress(Progress(message=m, phase="transcript")),
+                log=lambda m: on_progress(Progress(message=m, phase="transcript", substep="resolve")),
             )
         except Exception as exc:
             on_progress(
@@ -216,6 +225,7 @@ def _resolve_sources(
                     message=f"[{src}] 채널/재생목록 분석 실패: {type(exc).__name__}: {exc}",
                     level="error",
                     phase="transcript",
+                    substep="resolve",
                 )
             )
             failures.append(src)
@@ -225,6 +235,7 @@ def _resolve_sources(
                 message=f"채널/재생목록에서 {len(found)}개 영상 확보: {src}",
                 level="success",
                 phase="transcript",
+                substep="resolve",
             )
         )
         resolved.extend(found)
@@ -244,17 +255,29 @@ def build_transcript(
     force: bool,
     *,
     log: Callable[[str], None] = print,
+    on_progress: ProgressCB = _noop,
     on_stt_progress: stage3_stt.ProgressCB | None = None,
     should_stop: Callable[[], bool] = lambda: False,
 ):
     """1~4단계: 영상 하나의 트랜스크립트를 생성/로딩한다.
 
     ``log`` 로 진행 메시지를 흘려 CLI 는 stdout 에, GUI 는 로그 뷰에 보이게 한다.
+    ``on_progress`` 는 ingest/subtitles/stt/clean 경계마다 ``substep`` 이 실린 이벤트를
+    흘려, GUI 가 트랜스크립트 단계 내부의 세부 타임라인(칩)을 실시간으로 그릴 수 있게
+    한다. 같은 경계에서 ``log`` 로도 한 줄 남기므로, 채널처럼 여러 영상을 연달아 처리할
+    때도 로그에 단계별 흐름이 그대로 남는다.
     ``on_stt_progress`` 는 STT 가 실제로 돌 때만(자막 채택 시엔 호출되지 않음) 세그먼트
     단위로 (완료 초, 전체 초)를 알려 GUI 진행바를 세밀하게 갱신할 수 있게 한다.
     ``should_stop`` 은 STT 에 그대로 전달되어 세그먼트/청크 단위로 확인되며, True 가 되면
     이 영상의 STT 가 끝나길 기다리지 않고 :class:`StoppedError` 로 즉시 전파된다.
     """
+
+    def _substep(name: str, message: str) -> None:
+        log(message)
+        on_progress(
+            Progress(message=message, phase="transcript", substep=name, indeterminate=True, transient=True)
+        )
+
     # 완전 캐시된 경우 URL 에서 id 를 뽑아 네트워크 조회 없이 로딩(오프라인 재실행 가능)
     cached_id = _video_id_from_url(url)
     if cached_id and not force:
@@ -264,6 +287,7 @@ def build_transcript(
             segs = [Segment(**s) for s in json.loads(vp.transcript.read_text(encoding="utf-8"))]
             return cached_id, meta, segs
 
+    _substep("ingest", f"오디오·메타 확인 중… {url}")
     info = stage1_ingest.probe(url)
     vid = info["id"]
     vp = VideoPaths(data_dir, vid)
@@ -289,7 +313,7 @@ def build_transcript(
         try:
             engine = cfg.stt.engine
             engine_desc = cfg.stt.model if engine == "faster-whisper" else f"vosk/{cfg.stt.vosk_model_size}"
-            log(f"[{vid}] STT 실행 ({engine} {engine_desc})...")
+            _substep("stt", f"[{vid}] STT 실행 ({engine} {engine_desc})...")
             return stage3_stt.transcribe(
                 audio,
                 cfg.language,
@@ -327,17 +351,26 @@ def build_transcript(
         sub = vp.root / f"audio.{meta['manual_sub_lang']}.vtt"
         if not sub.exists():
             return None
-        return _accept_caption(stage2_subtitles.parse_vtt(sub), "수동", sub.name)
+        _substep("subtitles", f"[{vid}] 수동 자막 확인 중… {sub.name}")
+        result = _accept_caption(stage2_subtitles.parse_vtt(sub), "수동", sub.name)
+        # transcript.json 에 이미 다 파싱해 넣었으니, 원본 .vtt 는 채택된 뒤로는 더 이상
+        # 안 읽는다(재실행해도 transcript.json 캐시 히트로 다시 안 열어봄) — 지운다.
+        if result is not None:
+            sub.unlink(missing_ok=True)
+        return result
 
     def _from_auto() -> list[Segment] | None:
         if not subs.use_auto_fallback or not meta.get("auto_sub_lang"):
             return None
-        log(f"[{vid}] 유튜브 자동자막 다운로드 (lang={meta['auto_sub_lang']})...")
+        _substep("subtitles", f"[{vid}] 유튜브 자동자막 다운로드 중… (lang={meta['auto_sub_lang']})")
         sub = stage1_ingest.download_auto_subtitle(url, vp, meta["auto_sub_lang"], log=log)
         if not sub:
             return None
         parsed = stage2_subtitles.parse_vtt(sub, collapse_rollup=True)
-        return _accept_caption(parsed, "자동", sub.name)
+        result = _accept_caption(parsed, "자동", sub.name)
+        if result is not None:
+            sub.unlink(missing_ok=True)
+        return result
 
     sources = (
         [_from_stt, _from_manual, _from_auto]
@@ -355,6 +388,7 @@ def build_transcript(
             f"[{vid}] 트랜스크립트를 확보하지 못했습니다 (STT·수동·자동 자막 모두 실패하거나 불완전)."
         )
 
+    _substep("clean", f"[{vid}] 텍스트 정제 중…")
     segs = stage4_clean.clean_segments(segs)
     vp.transcript.write_text(
         json.dumps([s.model_dump() for s in segs], ensure_ascii=False, indent=2),
@@ -390,6 +424,15 @@ def run_pipeline(
     """
     data_dir = Path(data_dir if data_dir is not None else cfg.data_dir)
     out_dir = Path(out_dir if out_dir is not None else cfg.output_dir)
+
+    # 채널/재생목록 입력이면 그 채널 전용 하위 폴더로 정리해, 여러 채널을 반복 처리해도
+    # 캐시·산출물이 저장 폴더에 뒤섞이지 않게 한다. 소스가 섞여 있으면 첫 채널/재생목록
+    # 하나만 기준으로 삼는다(개별 영상만 있으면 기존처럼 저장 폴더에 바로 정리).
+    channel_name = next((n for v in videos if (n := channel_folder_slug(v))), None)
+    if channel_name:
+        data_dir = data_dir / channel_name
+        out_dir = out_dir / channel_name
+        on_progress(Progress(message=f"채널 폴더로 정리: {out_dir}", phase="transcript"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # --- 0단계: 채널/재생목록 URL 을 최근 N개 영상으로 확장 ---
@@ -403,7 +446,7 @@ def run_pipeline(
     for i, url in enumerate(videos, start=1):
         if should_stop():
             return PipelineResult(
-                video_count=len(transcripts), failures=failures, stopped=True
+                video_count=len(transcripts), out_dir=out_dir, failures=failures, stopped=True
             )
         on_progress(
             Progress(
@@ -422,6 +465,7 @@ def run_pipeline(
                 data_dir,
                 force,
                 log=lambda m: on_progress(Progress(message=m, phase="transcript")),
+                on_progress=on_progress,
                 on_stt_progress=_make_stt_progress_reporter(on_progress, i, total, url),
                 should_stop=should_stop,
             )
@@ -430,7 +474,9 @@ def run_pipeline(
             on_progress(
                 Progress(message=f"[{url}] 중단 요청으로 STT 를 멈췄습니다.", level="warning", phase="transcript")
             )
-            return PipelineResult(video_count=len(transcripts), failures=failures, stopped=True)
+            return PipelineResult(
+                video_count=len(transcripts), out_dir=out_dir, failures=failures, stopped=True
+            )
         except Exception as exc:  # 한 영상 실패가 배치 전체를 막지 않도록
             error_msg = str(exc).lower()
             reason = ""
@@ -491,7 +537,7 @@ def run_pipeline(
 
     if should_stop():
         return PipelineResult(
-            video_count=len(transcripts), failures=failures, stopped=True
+            video_count=len(transcripts), out_dir=out_dir, failures=failures, stopped=True
         )
 
     if stage == "transcript":
@@ -499,7 +545,7 @@ def run_pipeline(
             Progress(message="트랜스크립트 단계까지 완료.", level="success", phase="done")
         )
         return PipelineResult(
-            video_count=len(transcripts), failures=failures
+            video_count=len(transcripts), out_dir=out_dir, failures=failures
         )
 
     # LLM 은 5단계부터 필요 -> 여기서 지연 초기화 (자격증명 없으면 RuntimeError)
@@ -515,6 +561,7 @@ def run_pipeline(
             return PipelineResult(
                 video_count=len(transcripts),
                 unit_count=len(all_units),
+                out_dir=out_dir,
                 failures=failures,
                 stopped=True,
             )
@@ -552,6 +599,7 @@ def run_pipeline(
         return PipelineResult(
             video_count=len(transcripts),
             unit_count=len(all_units),
+            out_dir=out_dir,
             failures=failures,
         )
 
@@ -559,6 +607,7 @@ def run_pipeline(
         return PipelineResult(
             video_count=len(transcripts),
             unit_count=len(all_units),
+            out_dir=out_dir,
             failures=failures,
             stopped=True,
         )
@@ -593,6 +642,7 @@ def run_pipeline(
         video_count=len(transcripts),
         unit_count=len(all_units),
         concept_count=len(clusters),
+        out_dir=out_dir,
         wiki_path=wiki_path,
         clusters_path=clusters_path,
         failures=failures,

@@ -59,6 +59,21 @@ _STAGE_CHOICES = [
 _DEFAULT_STAGE = "transcript"
 # 지식 추출·통합(LLM)이 필요한 단계.
 _STAGES_NEEDING_LLM = {"all", "extract", "integrate"}
+# 전체 파이프라인 타임라인 칩 — Progress.phase 값과 매핑. 실제 표시 목록은 실행 단계
+# (stage_dd) 에 따라 걸러진다(예: '스크립트 추출까지'면 추출/통합 칩은 아예 안 보임).
+_PHASE_LABELS: dict[str, str] = {
+    "transcript": "트랜스크립트",
+    "extract": "지식 추출",
+    "integrate": "통합 문서화",
+}
+# 트랜스크립트 단계 내부의 세부 타임라인 — Progress.substep 값과 매핑(고정 순서).
+_SUBSTEP_LABELS: list[tuple[str, str]] = [
+    ("resolve", "소스 확인"),
+    ("ingest", "오디오·메타"),
+    ("subtitles", "자막 확인"),
+    ("stt", "STT 변환"),
+    ("clean", "텍스트 정제"),
+]
 # LLM 모델 선택지: (표시명, 모델 ID).
 _LLM_MODELS = [
     ("Claude Opus 4.8 (최고 성능)", "claude-opus-4-8"),
@@ -99,6 +114,11 @@ class PipelineGUI:
         self._app_closing = threading.Event()
         self._status_msg = "대기 중"
         self._status_color: str | None = None
+        # 타임라인 칩(phase_row/substep_row) 상태 — 중복 리렌더를 피하려고 마지막으로
+        # 그린 phase/substep 을 기억한다.
+        self._phase_order: list[str] = ["transcript"]
+        self._last_rendered_phase: str | None = None
+        self._last_rendered_substep: str | None = None
         self.base_cfg = _load_base_config(_DEFAULT_CONFIG_PATH)
         self._build()
         # 데몬 스레드라 창을 닫으면 함께 종료된다.
@@ -168,7 +188,7 @@ class PipelineGUI:
             width=260,
             options=[ft.dropdown.Option(key=v, text=label) for label, v in _STAGE_CHOICES],
             # flet 0.85 Dropdown 의 선택 변경 이벤트는 on_change 가 아니라 on_select 다.
-            on_select=lambda _e: self._apply_llm_enabled(),
+            on_select=lambda _e: self._on_stage_changed(),
         )
 
         self.start_btn = ft.Button("시작", icon=ft.Icons.PLAY_ARROW, on_click=lambda _e: self._start())
@@ -271,6 +291,10 @@ class PipelineGUI:
         )
 
         self.progress = ft.ProgressBar(value=0)
+        # 진행바 밑 실시간 타임라인: 큰 단계(phase_row) + 트랜스크립트 단계 내부 세부
+        # 작업(substep_row, 트랜스크립트 진행 중에만 보임).
+        self.phase_row = ft.Row(spacing=6, wrap=True)
+        self.substep_row = ft.Row(spacing=6, wrap=True, visible=False)
         self.status = ft.Text("대기 중", size=13)
         self.copy_log_btn = ft.IconButton(
             icon=ft.Icons.CONTENT_COPY,
@@ -303,6 +327,8 @@ class PipelineGUI:
                     advanced,
                     ft.Row([self.start_btn, self.stop_btn, self.open_btn, self.wiki_btn], wrap=True),
                     self.progress,
+                    self.phase_row,
+                    self.substep_row,
                     ft.SelectionArea(content=self.status),
                     ft.Column(
                         [
@@ -334,6 +360,7 @@ class PipelineGUI:
         )
         self._apply_llm_enabled()
         self._refresh_cred_status()
+        self._reset_phase_chips()
 
     @staticmethod
     def _llm_options(current: str) -> list[ft.dropdown.Option]:
@@ -574,6 +601,7 @@ class PipelineGUI:
         self.log_view.controls.clear()
         self.progress.value = None
         self._last_result = None
+        self._reset_phase_chips()
         # 상태 텍스트는 렌더 틱 스레드가 소유하므로 여기서도 틱 버퍼를 거쳐 갱신한다
         # (직접 status.value 를 쓰면 두 스레드가 같은 컨트롤을 건드린다).
         self._set_status("시작 준비 중…")
@@ -598,6 +626,7 @@ class PipelineGUI:
             self.progress.value = 0
             self._append_log(f"오류: {type(exc).__name__}: {exc}", "error")
             self._set_status(f"오류: {exc}", ft.Colors.RED)
+            self._mark_phase_terminal("error")
             self._set_running(False)
             return
 
@@ -654,6 +683,139 @@ class PipelineGUI:
         elif p.total:
             self.progress.value = (p.done or 0) / p.total
         self._safe_update(self.progress)
+        self._update_phase_ui(p)
+
+    # -- 진행바 밑 실시간 타임라인(phase_row/substep_row) ------------------
+    def _on_stage_changed(self) -> None:
+        self._apply_llm_enabled()
+        self._reset_phase_chips()
+
+    @staticmethod
+    def _phase_order_for_stage(stage: str) -> list[str]:
+        if stage == "transcript":
+            return ["transcript"]
+        if stage == "extract":
+            return ["transcript", "extract"]
+        return ["transcript", "extract", "integrate"]
+
+    def _reset_phase_chips(self) -> None:
+        """대기 상태(또는 실행 단계 변경 시)의 타임라인 미리보기 — 전부 대기 중으로 그린다."""
+        self._phase_order = self._phase_order_for_stage(self.stage_dd.value or _DEFAULT_STAGE)
+        self._last_rendered_phase = None
+        self._last_rendered_substep = None
+        self._rebuild_phase_row(None)
+        self.substep_row.visible = False
+        self.substep_row.controls = []
+        self._safe_update(self.phase_row)
+        self._safe_update(self.substep_row)
+
+    def _step_chip(self, label: str, state: str) -> ft.Container:
+        muted = self._muted_color
+        if state == "done":
+            leading, color = ft.Icon(ft.Icons.CHECK_CIRCLE, size=14, color=ft.Colors.GREEN), ft.Colors.GREEN
+        elif state == "active":
+            leading = ft.ProgressRing(width=12, height=12, stroke_width=2, color=ft.Colors.PRIMARY)
+            color = ft.Colors.PRIMARY
+        elif state == "error":
+            leading, color = ft.Icon(ft.Icons.ERROR, size=14, color=ft.Colors.RED), ft.Colors.RED
+        elif state == "stopped":
+            leading, color = ft.Icon(ft.Icons.PAUSE_CIRCLE, size=14, color=ft.Colors.AMBER), ft.Colors.AMBER
+        else:  # pending
+            leading, color = ft.Icon(ft.Icons.CIRCLE_OUTLINED, size=14, color=muted), muted
+        return ft.Container(
+            content=ft.Row(
+                [leading, ft.Text(label, size=12, color=color, weight=ft.FontWeight.BOLD if state == "active" else None)],
+                spacing=4,
+                tight=True,
+            ),
+            padding=ft.Padding(left=8, top=4, right=8, bottom=4),
+            border_radius=12,
+            bgcolor=ft.Colors.with_opacity(0.12, color) if state != "pending" else None,
+        )
+
+    def _rebuild_phase_row(self, current_phase: str | None, *, terminal_state: str | None = None) -> None:
+        """전체 파이프라인 타임라인 칩(트랜스크립트→추출→통합)을 다시 그린다.
+
+        ``current_phase`` 가 ``"done"`` 이면 전부 완료로, 목록에 없으면(대기 중) 전부
+        대기 중으로 그린다. ``terminal_state``('error'|'stopped')가 있으면 실행이 멈춘
+        시점의 활성 칩을 그 상태로 고정해, 다 끝난 것처럼 보이지 않게 한다.
+        """
+        if current_phase == "done":
+            idx_current = len(self._phase_order)
+        elif current_phase in self._phase_order:
+            idx_current = self._phase_order.index(current_phase)
+        else:
+            idx_current = -1
+        controls: list[ft.Control] = []
+        for i, key in enumerate(self._phase_order):
+            if idx_current < 0:
+                state = "pending"
+            elif i < idx_current:
+                state = "done"
+            elif i == idx_current:
+                state = terminal_state or "active"
+            else:
+                state = "pending"
+            if controls:
+                controls.append(ft.Icon(ft.Icons.CHEVRON_RIGHT, size=14, color=self._muted_color))
+            controls.append(self._step_chip(_PHASE_LABELS[key], state))
+        self.phase_row.controls = controls
+
+    def _rebuild_substep_row(self, current_substep: str | None, *, terminal_state: str | None = None) -> None:
+        """트랜스크립트 단계 내부 세부 타임라인(소스 확인→오디오·메타→자막 확인→STT→정제)."""
+        order = [key for key, _ in _SUBSTEP_LABELS]
+        labels = dict(_SUBSTEP_LABELS)
+        idx_current = order.index(current_substep) if current_substep in order else -1
+        controls: list[ft.Control] = []
+        for i, key in enumerate(order):
+            if idx_current < 0:
+                state = "pending"
+            elif i < idx_current:
+                state = "done"
+            elif i == idx_current:
+                state = terminal_state or "active"
+            else:
+                state = "pending"
+            if controls:
+                controls.append(ft.Icon(ft.Icons.CHEVRON_RIGHT, size=12, color=self._muted_color))
+            controls.append(self._step_chip(labels[key], state))
+        self.substep_row.controls = controls
+
+    def _update_phase_ui(self, p: Progress) -> None:
+        """``_on_progress`` 에서 매 이벤트마다 호출 — phase/substep 이 실제로 바뀔 때만
+        해당 Row 를 다시 그려(불필요한 리렌더 방지) 실시간으로 갱신한다."""
+        phase = p.phase
+        if phase is not None and phase != self._last_rendered_phase:
+            self._last_rendered_phase = phase
+            self._rebuild_phase_row(phase)
+            self._safe_update(self.phase_row)
+
+        show_substep = phase == "transcript"
+        if show_substep != self.substep_row.visible:
+            self.substep_row.visible = show_substep
+            if not show_substep:
+                self.substep_row.controls = []
+                self._last_rendered_substep = None
+            self._safe_update(self.substep_row)
+
+        if show_substep and p.substep and p.substep != self._last_rendered_substep:
+            self._last_rendered_substep = p.substep
+            self._rebuild_substep_row(p.substep)
+            self._safe_update(self.substep_row)
+
+    def _mark_phase_terminal(self, terminal_state: str) -> None:
+        """실행이 실패/중단된 채 멈췄을 때, 마지막으로 활성이던 칩을 그 상태로 고정한다.
+
+        그냥 두면 마지막 스피너가 여전히 "진행 중"처럼 보여, 실제로는 멈춘 작업을 계속
+        도는 것처럼 오인하게 만든다.
+        """
+        if self._last_rendered_phase in (None, "done"):
+            return
+        self._rebuild_phase_row(self._last_rendered_phase, terminal_state=terminal_state)
+        self._safe_update(self.phase_row)
+        if self.substep_row.visible and self._last_rendered_substep:
+            self._rebuild_substep_row(self._last_rendered_substep, terminal_state=terminal_state)
+            self._safe_update(self.substep_row)
 
     def _append_log(self, message: str, level: str) -> None:
         color = _LEVEL_COLOR.get(level, ft.Colors.ON_SURFACE)
@@ -670,11 +832,17 @@ class PipelineGUI:
 
     def _finish(self, result: PipelineResult) -> None:
         self._last_result = result
+        # 채널/재생목록을 입력하면 run_pipeline 이 그 채널 전용 하위 폴더로 정리한다 —
+        # 실행 전에 추정해 둔 _last_out_dir(저장 폴더 그대로) 대신, 실제로 쓰인 폴더로
+        # 갱신해 '저장 폴더 열기' 가 정확한 위치를 연다.
+        if result.out_dir is not None:
+            self._last_out_dir = result.out_dir.resolve()
         if result.stopped:
             self._set_status(
                 "중단됨 — 처리한 부분은 저장 폴더에 캐시되었습니다. 다시 시작하면 이어서 진행합니다.",
                 ft.Colors.AMBER,
             )
+            self._mark_phase_terminal("stopped")
         elif result.wiki_path is not None:
             self._set_status(
                 f"완료 — 개념 {result.concept_count}개 · 영상 {result.video_count}개 · {result.wiki_path}",

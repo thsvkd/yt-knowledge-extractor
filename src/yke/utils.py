@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from urllib.parse import parse_qs, urlsplit
 
 
 class StoppedError(Exception):
@@ -30,6 +31,34 @@ def is_channel_or_playlist_url(url: str) -> bool:
     if "list=" in u or "/playlist" in u:
         return True
     return any(s in u for s in ("/@", "/channel/", "/c/", "/user/"))
+
+
+def channel_folder_slug(url: str) -> str | None:
+    """채널/재생목록 URL 에서 산출물을 정리할 폴더 이름을 뽑는다.
+
+    ``/@handle``·``/channel/ID``·``/c/name``·``/user/name`` 은 핸들/이름을 그대로 쓰고,
+    재생목록(``list=``)은 재생목록 ID 를 쓴다. 폴더 이름으로 쓸 수 없는 문자는 밑줄로
+    치환한다. 개별 영상 URL 이거나 이름을 뽑을 수 없으면 ``None`` (기존처럼 저장 폴더에
+    바로 정리).
+    """
+    if not is_channel_or_playlist_url(url):
+        return None
+    parts = urlsplit(url.strip())
+    qs = parse_qs(parts.query)
+    if qs.get("list") and qs["list"][0]:
+        raw = f"playlist_{qs['list'][0]}"
+    else:
+        segments = [s for s in parts.path.split("/") if s]
+        if not segments:
+            return None
+        if segments[0].startswith("@"):
+            raw = segments[0][1:]
+        elif segments[0] in ("channel", "c", "user") and len(segments) >= 2:
+            raw = segments[1]
+        else:
+            return None
+    slug = re.sub(r"[^\w\-]+", "_", raw).strip("_")
+    return slug or None
 
 
 def fmt_ts(seconds: float | None) -> str:

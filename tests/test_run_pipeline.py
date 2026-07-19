@@ -21,7 +21,7 @@ def _seg() -> list[Segment]:
     return [Segment(start=0.0, end=1.0, text="hi")]
 
 
-def _fake_bt(url, cfg, data_dir, force, *, log=print, on_stt_progress=None, should_stop=None):
+def _fake_bt(url, cfg, data_dir, force, *, log=print, on_progress=None, on_stt_progress=None, should_stop=None):
     vid = "v_" + url
     return vid, {"id": vid, "title": url}, _seg()
 
@@ -61,7 +61,7 @@ class TestRunPipeline(unittest.TestCase):
     def test_stt_sub_progress_reported_and_transient(self) -> None:
         # STT 세부 진행(초 단위)이 combined sub_progress 로 변환되어 흘러가는지,
         # 그리고 스피너/바 전용(transient)이라 영속 로그에는 안 남는지 확인한다.
-        def bt(url, cfg, data_dir, force, *, log=print, on_stt_progress=None, should_stop=None):
+        def bt(url, cfg, data_dir, force, *, log=print, on_progress=None, on_stt_progress=None, should_stop=None):
             if on_stt_progress:
                 on_stt_progress(30.0, 100.0)
                 on_stt_progress(100.0, 100.0)
@@ -77,7 +77,7 @@ class TestRunPipeline(unittest.TestCase):
         self.assertTrue(all(e.transient for e in sub_events))
 
     def test_failure_is_isolated(self) -> None:
-        def bt(url, cfg, data_dir, force, *, log=print, on_stt_progress=None, should_stop=None):
+        def bt(url, cfg, data_dir, force, *, log=print, on_progress=None, on_stt_progress=None, should_stop=None):
             if url == "bad":
                 raise RuntimeError("boom")
             return "v_ok", {"id": "v_ok"}, _seg()
@@ -99,7 +99,7 @@ class TestRunPipeline(unittest.TestCase):
     def test_stopped_error_mid_video_stt_is_not_a_failure(self) -> None:
         # 진행 중이던 영상의 STT 자체가 should_stop 을 감지해 StoppedError 를 던진 경우 —
         # (다음 영상 경계를 기다리지 않고) 즉시 멈추되, failures 목록에는 넣지 않는다.
-        def bt(url, cfg, data_dir, force, *, log=print, on_stt_progress=None, should_stop=None):
+        def bt(url, cfg, data_dir, force, *, log=print, on_progress=None, on_stt_progress=None, should_stop=None):
             if url == "slow":
                 raise StoppedError("stt stopped mid video")
             return "v_" + url, {"id": "v_" + url}, _seg()
@@ -121,7 +121,7 @@ class TestRunPipeline(unittest.TestCase):
     def test_stop_between_videos(self) -> None:
         processed = {"n": 0}
 
-        def bt(url, cfg, data_dir, force, *, log=print, on_stt_progress=None, should_stop=None):
+        def bt(url, cfg, data_dir, force, *, log=print, on_progress=None, on_stt_progress=None, should_stop=None):
             processed["n"] += 1
             return "v_" + url, {"id": "v_" + url}, _seg()
 
