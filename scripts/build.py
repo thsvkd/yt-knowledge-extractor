@@ -405,10 +405,13 @@ def main() -> int:
     if target == "windows" and not args.no_installer:
         version = _app_version()
         out = velopack_pack(dst, version)
-        info(f"Velopack 산출물: {out}\\  (Setup.exe + *.nupkg + releases.win.json)")
+        info(f"Velopack 산출물: {out}\\")
+        # 자동업데이트·설치에 필요한 것만 올린다: Setup.exe(설치) + *.nupkg(full/delta 업데이트
+        # 페이로드) + releases.win.json(피드). Portable.zip(대용량)·RELEASES(레거시)·
+        # assets.win.json(로컬 인덱스)은 GithubSource 가 쓰지 않으므로 올리지 않는다.
         info(
-            f"업로드: gh release create v{version} {out}\\*  --title v{version}  "
-            f"(또는 gh release upload v{version} {out}\\*)"
+            f"업로드(필수만): gh release create v{version} "
+            f"{out}\\*-Setup.exe {out}\\*.nupkg {out}\\releases.win.json --title v{version}"
         )
     else:
         archive = compress_bundle(dst)

@@ -268,7 +268,7 @@ python scripts/build.py --gpu-runtime   # cuBLAS 온디맨드 에셋 zip(GPU 가
 python scripts/build.py --no-installer  # CPU 번들 폴더/zip 만(설치기 생략)
 ```
 
-- 결과물(기본): `dist/velopack/` — `YtKnowledgeExtractor-win-Setup.exe`(설치기) + `*-full/delta.nupkg`(업데이트 패키지) + `releases.win.json`(매니페스트). 이 폴더 **전체**를 GitHub 릴리스에 올리면 앱이 자동 업데이트(변경분만 받는 **델타** 포함)에 사용합니다.
+- 결과물(기본): `dist/velopack/` — 릴리스에는 **`Setup.exe`(설치) + `*.nupkg`(full/delta 업데이트 페이로드) + `releases.win.json`(피드)** 세 종류만 올리면 앱이 자동 업데이트(변경분만 받는 **델타** 포함)에 사용합니다. `Portable.zip`(대용량)·`RELEASES`(레거시)·`assets.win.json`(로컬 인덱스)은 GithubSource 가 쓰지 않으므로 올리지 않습니다.
 - **GPU는 온디맨드**: CPU 설치기에는 cuBLAS를 넣지 않습니다(가볍게). NVIDIA 사용자는 앱의 **고급 옵션 → GPU 가속 다운로드**로 cuBLAS 런타임을 받습니다. 이 런타임 zip은 `--gpu-runtime`으로 만들어 `gpu-runtime-cu12` 릴리스에 한 번 올려 둡니다(앱 버전과 무관). GPU가 없으면 앱이 자동으로 CPU(int8)로 폴백합니다.
 - 사전 준비(Windows): Visual Studio "Desktop development with C++" 워크로드 + [Velopack CLI](https://velopack.io)(`dotnet tool install -g vpk`)가 필요합니다. Flutter SDK는 `flet build`가 필요 시 자동으로 다운로드합니다.
 
