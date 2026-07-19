@@ -45,8 +45,9 @@ packages = ["src/yke"]
 [dependency-groups]
 # flet-cli 는 `flet build`(네이티브 빌드) 전용 도구다. 선언하지 않으면 `uv sync` 가
 # 매번 "불필요"로 보고 제거하고, 직후 `flet build` 가 다시 설치해 설치/삭제가 반복된다.
-# dev 그룹에 두면 sync 가 보존해 이 churn 을 없앤다.
-dev = ["flet-cli>=0.85.3"]
+# pytest 도 마찬가지로 선언 없이 설치하면 `uv sync`(scripts/setup.py 포함) 가 매번
+# 지워버린다. dev 그룹에 두면 sync 가 보존해 이 churn 을 없앤다.
+dev = ["flet-cli>=0.85.3", "pytest>=8.0"]
 
 [tool.flet.app]
 # src-layout 이므로 flet build 가 src/ 아래에서 진입 모듈을 찾도록 지정한다.
