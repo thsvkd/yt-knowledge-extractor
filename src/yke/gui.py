@@ -628,8 +628,12 @@ class PipelineGUI:
 
     def _append_log(self, message: str, level: str) -> None:
         color = _LEVEL_COLOR.get(level, ft.Colors.ON_SURFACE)
+        # 개별 Text 에 selectable=True 를 주면 Flutter 에서 각 줄이 독립된
+        # SelectableText 가 되어 부모 SelectionArea 의 통합 선택 영역에 합쳐지지
+        # 않고, 드래그 선택이 한 줄을 벗어나지 못하는 문제가 있었다(실측 확인).
+        # 부모 SelectionArea(311줄)가 이미 선택을 제공하므로 여기서는 빼야 한다.
         self.log_view.controls.append(
-            ft.Text(message, size=12, color=color, no_wrap=False, selectable=True)
+            ft.Text(message, size=12, color=color, no_wrap=False)
         )
         if len(self.log_view.controls) > _MAX_LOG_ROWS:
             del self.log_view.controls[0]
