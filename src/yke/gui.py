@@ -223,7 +223,11 @@ class PipelineGUI:
         page = self.page
         page.title = "유튜브 지식 추출기"
         page.theme_mode = ft.ThemeMode.SYSTEM
-        page.padding = 20
+        # 오른쪽만 얇게: 루트 Column(scroll=AUTO)의 스크롤바가 이 padding 만큼 창
+        # 테두리에서 떨어져 그려진다 — 스크롤바를 테두리에 바짝 붙이기 위해 다른
+        # 변(20)보다 얇게 둔다. 콘텐츠 쪽 오른쪽 여백은 아래 Container 의 자체
+        # padding(right=14)이 스크롤바와 겹치지 않게 이미 확보하고 있다.
+        page.padding = ft.Padding(left=20, top=20, right=4, bottom=20)
         page.window.width = 820
         page.window.height = 860
         # 창 높이는 하드코딩한 최소값에 의존하지 않는다. 루트 Column 을 스크롤 가능하게 두어
@@ -512,7 +516,12 @@ class PipelineGUI:
                                             height=_LOG_PANEL_HEIGHT,
                                             border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
                                             border_radius=8,
-                                            padding=8,
+                                            # 스크롤바는 이 Container 의 오른쪽 패딩만큼
+                                            # 테두리에서 떨어져 그려진다 — 다른 변(8)보다
+                                            # 얇게(2) 둬서 스크롤바가 패널 오른쪽 끝에 더
+                                            # 가깝게 붙게 한다. log_view 자체의 right=14
+                                            # 패딩(텍스트-스크롤바 간격)은 그대로 유지.
+                                            padding=ft.Padding(left=8, top=8, right=2, bottom=8),
                                         ),
                                     ],
                                     spacing=6,
