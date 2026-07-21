@@ -23,6 +23,15 @@ dependencies = [
     # 버전과 무관하게 번들에 포함된다. 앱 진입점(main.py)에서 App().run() 으로 설치/업데이트
     # 라이프사이클 훅을 처리하고, GUI 에서 UpdateManager 로 GitHub Releases 업데이트를 받는다.
     "velopack>=1.2.0",
+    # LLM 프로바이더로 Google Gemini(BYOK) 를 지원한다. 배포된 end-user 는 로컬 `claude` CLI
+    # 가 없으므로, 본인 Gemini API 키로 지식 추출·통합·자막 보정을 쓸 수 있어야 한다 →
+    # google-genai(신 통합 SDK)를 코어 의존성으로 번들한다(optional 이면 설치기 사용자가
+    # `uv sync --extra` 를 못 하므로). Claude 만 쓰는 경우엔 import 되지 않는다(gemini_client
+    # 는 provider=gemini 일 때만 지연 로딩).
+    "google-genai>=1.0",
+    # API 키(BYOK)는 평문 설정 파일이 아니라 OS 자격증명 저장소(Windows 자격증명 관리자)에
+    # 보관한다. keyring 은 순수 파이썬 + Windows 내장 백엔드(ctypes)라 번들이 가볍다.
+    "keyring>=25.0",
 ]
 
 [project.optional-dependencies]

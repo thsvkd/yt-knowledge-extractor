@@ -26,6 +26,10 @@ import flet as ft
 from . import __version__, gpu_runtime, velopack_update
 from .config import Config, LLMConfig, load_config
 from .llm.claude_client import is_available as _claude_cli_available
+from .llm.credentials import has_gemini_api_key, set_gemini_api_key
+from .llm.gemini_client import genai_available as _genai_available
+from .llm.gemini_client import list_generate_models as _list_gemini_models
+from .llm.gemini_client import resolve_aliases as _resolve_gemini_aliases
 from .run import Progress, PipelineResult, run_pipeline, _fmt_hms
 from .utils import is_channel_or_playlist_url
 
@@ -103,12 +107,42 @@ _STAGE_PARTITION: dict[str, dict[str, tuple[float, float]]] = {
     "integrate": {"transcript": (0.0, 0.50), "extract": (0.50, 0.35), "integrate": (0.85, 0.15)},
     "all": {"transcript": (0.0, 0.50), "extract": (0.50, 0.35), "integrate": (0.85, 0.15)},
 }
-# LLM 모델 선택지: (표시명, 모델 ID).
-_LLM_MODELS = [
-    ("Claude Opus 4.8 (최고 성능)", "claude-opus-4-8"),
-    ("Claude Sonnet 5 (균형)", "claude-sonnet-5"),
-    ("Claude Haiku 4.5 (빠름·저렴)", "claude-haiku-4-5-20251001"),
+# LLM 프로바이더 선택지: (표시명, provider 값).
+_LLM_PROVIDERS = [
+    ("Claude Code CLI", "claude"),
+    ("Google Gemini (API 키)", "gemini"),
 ]
+# 프로바이더별 LLM 모델 선택지: (표시명, 모델 ID). 프로바이더를 바꾸면 모델 드롭다운
+# 선택지도 함께 바뀐다(_on_provider_changed).
+#
+# Gemini 는 버전 번호(3.5→3.6…)가 자주 바뀌므로 특정 버전을 하드코딩하면 금방 낡는다.
+# 그래서 프리셋은 항상 최신을 가리키는 별칭(gemini-*-latest)을 기본으로 두고, 안정 핀 버전
+# 몇 개를 함께 둔다. API 키를 넣으면 실제 사용 가능한 구체 버전(예: gemini-3.6-flash)이
+# 라이브로 목록에 추가된다(_refresh_gemini_models → _gemini_options_from_live).
+_LLM_MODELS_BY_PROVIDER: dict[str, list[tuple[str, str]]] = {
+    "claude": [
+        ("Claude Opus 4.8 (최고 성능)", "claude-opus-4-8"),
+        ("Claude Sonnet 5 (균형)", "claude-sonnet-5"),
+        ("Claude Haiku 4.5 (빠름·저렴)", "claude-haiku-4-5-20251001"),
+    ],
+    "gemini": [
+        ("Gemini Flash (최신)", "gemini-flash-latest"),
+        ("Gemini Pro (최신)", "gemini-pro-latest"),
+        ("Gemini Flash-Lite (최신·최저가)", "gemini-flash-lite-latest"),
+        ("Gemini 2.5 Flash (안정)", "gemini-2.5-flash"),
+        ("Gemini 2.5 Pro (안정)", "gemini-2.5-pro"),
+    ],
+}
+# 프로바이더별 기본 모델(프로바이더 전환 시 채워 넣는 값). Gemini 는 '항상 최신 Flash'
+# 별칭을 기본으로 두어 새 모델이 나와도 기본값이 낡지 않게 한다.
+_DEFAULT_MODEL_BY_PROVIDER: dict[str, str] = {
+    "claude": "claude-opus-4-8",
+    "gemini": "gemini-flash-latest",
+}
+# Gemini API 키 발급 방법 안내 문서(GitHub 에서 렌더링). 앱의 '키 발급 방법' 버튼이 연다.
+_GEMINI_KEY_GUIDE_URL = (
+    "https://github.com/thsvkd/yt-knowledge-extractor/blob/main/docs/gemini-api-key.md"
+)
 # 채널/재생목록에서 가져올 최근 영상 수 기본값.
 _DEFAULT_LIMIT = 5
 
@@ -217,6 +251,9 @@ class PipelineGUI:
         self.page.run_thread(self._auto_check_updates)
         # GPU 가속 가능 여부(NVIDIA 감지 + cuBLAS 유무)를 백그라운드에서 확인해 UI 를 채운다.
         self.page.run_thread(self._refresh_gpu_status)
+        # Gemini 로 시작하면(설정 기억) 사용 가능한 최신 모델을 백그라운드로 불러온다.
+        if self._current_provider() == "gemini":
+            self.page.run_thread(self._refresh_gemini_models)
 
     # -- UI 구성 ---------------------------------------------------------
     def _build(self) -> None:
@@ -334,15 +371,81 @@ class PipelineGUI:
             width=150,
             options=[ft.dropdown.Option(key=v, text=label) for label, v in _DEVICE_CHOICES],
         )
+        # 프로바이더/모델/보정 초기값 — GUI 설정(재시작 후 기억) 우선, 없으면 config 파일.
+        _saved = self._gui_settings
+        _init_provider = _saved.get("llm_provider") or cfg.llm.provider
+        if _init_provider not in {"claude", "gemini"}:
+            _init_provider = "claude"
+        _init_model = _saved.get("llm_model") or cfg.llm.model
+        _init_repair = bool(_saved.get("repair_transcript", cfg.llm.repair_transcript))
+
+        self.llm_provider_dd = ft.Dropdown(
+            label="LLM 제공자",
+            value=_init_provider,
+            width=230,
+            options=[ft.dropdown.Option(key=v, text=label) for label, v in _LLM_PROVIDERS],
+            tooltip=(
+                "지식 추출·통합·자막 보정에 쓸 LLM. Claude Code CLI(로컬 로그인) 또는 "
+                "Google Gemini(본인 API 키). 배포판 사용자는 Gemini 를 권장합니다."
+            ),
+            # flet 0.85 Dropdown 의 선택 변경 이벤트는 on_change 가 아니라 on_select 다.
+            on_select=lambda _e: self._on_provider_changed(),
+        )
         self.llm_model_dd = ft.Dropdown(
-            label="언어 모델 (지식 추출·통합)",
-            value=cfg.llm.model,
+            label="언어 모델 (추출·통합·보정)",
+            value=_init_model,
             width=300,
-            options=self._llm_options(cfg.llm.model),
-            # 프리셋 3종 외의 모델 ID(신규 모델 등)도 직접 입력할 수 있게 연다.
+            options=self._llm_options(_init_model, _init_provider),
+            # 프리셋 외의 모델 ID(신규 모델 등)도 직접 입력할 수 있게 연다.
             editable=True,
             hint_text="목록에 없으면 모델 ID를 직접 입력하세요",
             hint_style=_hint,
+        )
+        # 모델 목록 새로고침 — Gemini 는 API 키로 실제 사용 가능한 최신 모델을 불러온다.
+        # (provider=gemini 일 때만 보인다. Google 이 새 모델을 추가하면 여기 눌러 반영.)
+        self.gemini_refresh_btn = ft.IconButton(
+            icon=ft.Icons.REFRESH,
+            icon_size=18,
+            tooltip="사용 가능한 Gemini 모델 목록 새로고침(API 키 필요)",
+            visible=(_init_provider == "gemini"),
+            on_click=lambda _e: self._on_refresh_models(),
+        )
+        # Gemini API 키 입력 — provider=gemini 일 때만 보인다. 키는 keyring(OS 자격증명
+        # 저장소)에 저장하고 평문 설정 파일엔 남기지 않는다(_save_gemini_key).
+        self.gemini_key_field = ft.TextField(
+            label="Gemini API 키",
+            password=True,
+            can_reveal_password=True,
+            width=360,
+            hint_text="AIza… (aistudio.google.com/apikey 에서 발급)",
+            hint_style=_hint,
+            label_style=_muted,
+        )
+        self.gemini_key_save_btn = ft.Button(
+            "키 저장", icon=ft.Icons.KEY, on_click=lambda _e: self._save_gemini_key()
+        )
+        # 키 발급 방법 안내 — 브라우저에서 GitHub 문서(docs/gemini-api-key.md)를 연다.
+        self.gemini_guide_btn = ft.TextButton(
+            "키 발급 방법",
+            icon=ft.Icons.HELP_OUTLINE,
+            tooltip=_GEMINI_KEY_GUIDE_URL,
+            on_click=lambda _e: self._open_url(_GEMINI_KEY_GUIDE_URL),
+        )
+        self.gemini_row = ft.Row(
+            [self.gemini_key_field, self.gemini_key_save_btn, self.gemini_guide_btn],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            wrap=True,
+            visible=(_init_provider == "gemini"),
+        )
+        # 자막 LLM 보정(4.5단계): 트랜스크립트 확보 직후 깨진 자막을 LLM 으로 교정한다.
+        self.repair_cb = ft.Checkbox(
+            label="자막 LLM 보정 (깨진 자막 복원)",
+            value=_init_repair,
+            tooltip=(
+                "업로더 수동 자막이나 유튜브 자동 자막이 깨진 경우(오탈자·구두점 없음·인식 "
+                "오류)를 LLM 으로 교정합니다. 타임스탬프는 보존되며 LLM 제공자 설정이 필요합니다."
+            ),
+            on_change=lambda _e: self._on_repair_changed(),
         )
         self.force_cb = ft.Checkbox(label="강제로 재생성", value=False)
         self.force_local_stt_cb = ft.Checkbox(
@@ -351,8 +454,8 @@ class PipelineGUI:
             tooltip="활성화하면 유튜브 자막을 무시하고 로컬 STT(faster-whisper)만 사용합니다",
         )
 
-        # 지식 추출·통합은 로컬 Claude Code CLI(`claude -p`)를 호출한다. 인증은 CLI 의
-        # 로그인 상태를 그대로 쓰므로 앱에서 별도로 토큰을 입력·저장하지 않는다.
+        # LLM 자격증명 상태 텍스트 — 선택한 프로바이더에 맞춰 갱신된다(_refresh_cred_status):
+        # Claude 는 CLI 감지 여부를, Gemini 는 SDK 설치 + API 키 설정 여부를 보여준다.
         self.cred_status = ft.Text(size=12, color=_muted_color)
 
         # 자체 업데이트: 확인 버튼 + 상태. 새 버전이 있으면 같은 버튼이 '업데이트 후 재시작'으로 바뀐다.
@@ -388,7 +491,13 @@ class PipelineGUI:
                                 ],
                                 wrap=True,
                             ),
-                            self.llm_model_dd,
+                            ft.Row(
+                                [self.llm_provider_dd, self.llm_model_dd, self.gemini_refresh_btn],
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                wrap=True,
+                            ),
+                            self.gemini_row,
+                            self.repair_cb,
                             self.cred_status,
                             self.force_cb,
                             self.force_local_stt_cb,
@@ -542,11 +651,16 @@ class PipelineGUI:
         self._reset_phase_chips()
         self._refresh_channel_options()
 
+    def _current_provider(self) -> str:
+        """현재 선택된 LLM 프로바이더(claude | gemini)."""
+        return self.llm_provider_dd.value or "claude"
+
     @staticmethod
-    def _llm_options(current: str) -> list[ft.dropdown.Option]:
-        """LLM 모델 드롭다운 옵션. 설정값이 목록에 없으면 그 값도 선택지로 추가한다."""
-        options = [ft.dropdown.Option(key=mid, text=label) for label, mid in _LLM_MODELS]
-        known = {mid for _label, mid in _LLM_MODELS}
+    def _llm_options(current: str, provider: str) -> list[ft.dropdown.Option]:
+        """프로바이더별 LLM 모델 드롭다운 옵션. 설정값이 목록에 없으면 그 값도 선택지로 추가한다."""
+        presets = _LLM_MODELS_BY_PROVIDER.get(provider, [])
+        options = [ft.dropdown.Option(key=mid, text=label) for label, mid in presets]
+        known = {mid for _label, mid in presets}
         if current and current not in known:
             options.insert(0, ft.dropdown.Option(key=current, text=current))
         return options
@@ -556,21 +670,36 @@ class PipelineGUI:
 
         editable 드롭다운이라 프리셋을 고르면 ``value``(키)가, 직접 입력하면 ``text``만
         갱신될 수 있다. ``text``가 프리셋 라벨과 일치하면 그 키로, 아니면 입력값 그대로
-        (커스텀 모델 ID)를 쓴다.
+        (커스텀 모델 ID)를 쓴다. 비어 있으면 프로바이더 기본 모델로 폴백한다.
         """
+        provider = self._current_provider()
+        presets = _LLM_MODELS_BY_PROVIDER.get(provider, [])
         text = (self.llm_model_dd.text or "").strip()
         if text:
-            by_label = {label: mid for label, mid in _LLM_MODELS}
+            by_label = {label: mid for label, mid in presets}
             return by_label.get(text, text)
-        return self.llm_model_dd.value or ""
+        return self.llm_model_dd.value or _DEFAULT_MODEL_BY_PROVIDER.get(provider, "")
 
     def _llm_controls(self) -> tuple[ft.Control, ...]:
-        """'전체(지식 문서화)' 단계에서만 필요한 LLM 관련 컨트롤."""
-        return (self.llm_model_dd,)
+        """LLM 이 필요할 때만 활성화하는 프로바이더/모델 선택 컨트롤.
+
+        (Gemini API 키 입력은 여기 넣지 않는다 — 실행 단계와 무관하게 언제든 저장할 수
+        있어야 하므로 실행 중에만 잠근다.)
+        """
+        return (self.llm_provider_dd, self.llm_model_dd)
+
+    def _llm_needed(self) -> bool:
+        """이번 설정이 LLM 을 쓰는지 — '지식 문서화' 단계이거나 자막 보정이 켜졌을 때."""
+        stage_needs = (self.stage_dd.value or _DEFAULT_STAGE) in _STAGES_NEEDING_LLM
+        return stage_needs or bool(self.repair_cb.value)
 
     def _apply_llm_enabled(self) -> None:
-        """실행 단계가 LLM 을 쓰지 않으면(스크립트 추출까지) 언어 모델 UI 를 비활성화한다."""
-        enabled = (self.stage_dd.value or _DEFAULT_STAGE) in _STAGES_NEEDING_LLM
+        """LLM 을 쓰지 않으면 프로바이더/모델 선택 UI 를 비활성화한다.
+
+        자막 보정(repair_cb)은 트랜스크립트 단계에서도 LLM 을 쓰므로, 스크립트 추출까지만
+        실행해도 보정이 켜져 있으면 LLM UI 를 활성 상태로 둔다.
+        """
+        enabled = self._llm_needed()
         for c in self._llm_controls():
             c.disabled = not enabled
             self._safe_update(c)
@@ -685,15 +814,141 @@ class PipelineGUI:
         self._set_status_now("중단 요청됨 — 곧 멈춥니다…", ft.Colors.AMBER)
 
     def _refresh_cred_status(self) -> None:
-        """Claude Code CLI 감지 여부를 상태 텍스트에 반영한다."""
+        """선택한 프로바이더의 자격증명 상태를 상태 텍스트에 반영한다."""
+        if self._current_provider() == "gemini":
+            if not _genai_available():
+                self._set_cred_status(
+                    "google-genai 패키지가 없습니다 — `uv sync` 로 설치하세요.",
+                    self._muted_color,
+                )
+            elif has_gemini_api_key():
+                self._set_cred_status("Gemini API 키 설정됨 ✓", ft.Colors.GREEN)
+            else:
+                self._set_cred_status(
+                    "Gemini API 키가 필요합니다 — aistudio.google.com/apikey 에서 발급 후 "
+                    "아래에 입력하고 '키 저장'을 누르세요.",
+                    self._muted_color,
+                )
+            return
+        # provider == claude
         if _claude_cli_available():
             self._set_cred_status("Claude CLI 감지됨 ✓", ft.Colors.GREEN)
         else:
             self._set_cred_status(
-                "Claude CLI 를 찾을 수 없습니다 — '전체 (지식 문서화까지)' 단계에는 "
-                "claude.com/claude-code 설치 + `claude login` 이 필요합니다.",
+                "Claude CLI 를 찾을 수 없습니다 — '전체 (지식 문서화까지)' 단계나 자막 "
+                "보정에는 claude.com/claude-code 설치 + `claude login`, 또는 Gemini 사용이 필요합니다.",
                 self._muted_color,
             )
+
+    def _on_provider_changed(self) -> None:
+        """프로바이더 전환 — 모델 선택지/기본값을 바꾸고, Gemini 전용 UI 를 토글한다."""
+        provider = self._current_provider()
+        default_model = _DEFAULT_MODEL_BY_PROVIDER.get(provider, "")
+        # editable 드롭다운의 잔여 text 를 지우고 새 프로바이더 프리셋으로 교체한다.
+        self.llm_model_dd.options = self._llm_options(default_model, provider)
+        self.llm_model_dd.value = default_model
+        self.llm_model_dd.text = ""
+        self._safe_update(self.llm_model_dd)
+        is_gemini = provider == "gemini"
+        self.gemini_row.visible = is_gemini
+        self.gemini_refresh_btn.visible = is_gemini
+        self._safe_update(self.gemini_row)
+        self._safe_update(self.gemini_refresh_btn)
+        self._apply_llm_enabled()
+        self._refresh_cred_status()
+        self._persist_llm_settings()
+        # Gemini 로 바꿨고 키가 있으면 실제 사용 가능한 최신 모델을 백그라운드로 불러온다.
+        if is_gemini:
+            self.page.run_thread(self._refresh_gemini_models)
+
+    def _on_repair_changed(self) -> None:
+        """자막 보정 토글 — LLM 필요 여부가 바뀌므로 LLM UI 활성 상태를 다시 계산한다."""
+        self._apply_llm_enabled()
+        self._persist_llm_settings()
+
+    def _save_gemini_key(self) -> None:
+        """입력한 Gemini API 키를 keyring(OS 자격증명 저장소)에 저장한다."""
+        key = (self.gemini_key_field.value or "").strip()
+        if not key:
+            self._set_cred_status("API 키를 입력한 뒤 '키 저장'을 누르세요.", ft.Colors.AMBER)
+            return
+        try:
+            set_gemini_api_key(key)
+        except Exception as exc:
+            self._set_cred_status(f"키 저장 실패: {exc}", ft.Colors.RED)
+            return
+        # 저장 후 화면 입력값은 지운다(키는 keyring 에 안전 보관됨).
+        self.gemini_key_field.value = ""
+        self._safe_update(self.gemini_key_field)
+        self._refresh_cred_status()
+        # 키가 생겼으니 사용 가능한 최신 모델을 백그라운드로 불러온다.
+        self.page.run_thread(self._refresh_gemini_models)
+
+    def _persist_llm_settings(self) -> None:
+        """프로바이더/모델/보정 선택을 GUI 설정에 저장해 재시작 후에도 기억한다(키는 제외)."""
+        self._gui_settings["llm_provider"] = self._current_provider()
+        self._gui_settings["llm_model"] = self._selected_llm_model()
+        self._gui_settings["repair_transcript"] = bool(self.repair_cb.value)
+        _save_gui_settings(self._gui_settings)
+
+    @staticmethod
+    def _gemini_options(
+        live_pairs: list[tuple[str, str]], alias_targets: dict[str, str]
+    ) -> list[ft.dropdown.Option]:
+        """드롭다운 옵션 = 프리셋(항상-최신 별칭) 먼저 + 라이브 구체 버전 추가.
+
+        별칭(gemini-*-latest)은 항상 위에 남겨 사용자가 '최신'을 계속 고를 수 있게 하고,
+        해석된 구체 모델명이 있으면 라벨에 병기한다(예: "Gemini Flash (최신) → gemini-3.6-flash").
+        그 아래에 API 가 실제로 주는 구체 버전을 표시명과 함께 붙인다(예: "Gemini 3.6 Flash").
+        """
+        presets = _LLM_MODELS_BY_PROVIDER["gemini"]
+        preset_ids = {mid for _l, mid in presets}
+        options: list[ft.dropdown.Option] = []
+        for label, mid in presets:
+            target = alias_targets.get(mid)
+            text = f"{label} → {target}" if target else label
+            options.append(ft.dropdown.Option(key=mid, text=text))
+        for mid, display in live_pairs:
+            if mid in preset_ids:
+                continue
+            text = display if display == mid else f"{display} ({mid})"
+            options.append(ft.dropdown.Option(key=mid, text=text))
+        return options
+
+    def _refresh_gemini_models(self) -> None:
+        """(백그라운드) API 키로 사용 가능한 Gemini 모델(+별칭 해석)을 불러와 드롭다운을 채운다.
+
+        실패/키 없음이면 정적 프리셋을 그대로 둔다(현재 선택값은 건드리지 않는다).
+        """
+        live = _list_gemini_models()
+        if not live:
+            return
+        self.llm_model_dd.options = self._gemini_options(live, _resolve_gemini_aliases())
+        self._safe_update(self.llm_model_dd)
+
+    def _on_refresh_models(self) -> None:
+        """'새로고침' 버튼 — 상태를 보여주며 Gemini 모델 목록을 다시 불러온다."""
+        self._set_cred_status("Gemini 모델 목록 갱신 중…", self._muted_color)
+        self.page.run_thread(self._refresh_models_with_status)
+
+    def _refresh_models_with_status(self) -> None:
+        live = _list_gemini_models()
+        if live:
+            self.llm_model_dd.options = self._gemini_options(live, _resolve_gemini_aliases())
+            self._safe_update(self.llm_model_dd)
+            self._set_cred_status(
+                f"Gemini API 키 설정됨 ✓ · 사용 가능 모델 {len(live)}개", ft.Colors.GREEN
+            )
+        else:
+            # 키 없음/오프라인/실패 → 사유를 일반 자격증명 상태로 안내한다.
+            self._refresh_cred_status()
+
+    def _open_url(self, url: str) -> None:
+        """기본 브라우저로 URL 을 연다(외부 안내 문서 등)."""
+        try:
+            self.page.launch_url(url)
+        except Exception:
+            logger.debug("URL 열기 실패: %s", url, exc_info=True)
 
     @staticmethod
     def _safe_update(control: ft.Control) -> None:
@@ -869,17 +1124,34 @@ class PipelineGUI:
         if not urls:
             self._set_status_now("유튜브 URL 을 한 줄에 하나씩 입력하세요.", ft.Colors.RED)
             return
-        # 자격증명 게이트: '전체' 단계는 로컬 Claude Code CLI 가 있어야 한다.
+        # 자격증명 게이트: '전체(지식 문서화)' 단계는 선택한 LLM 프로바이더가 준비돼야 한다.
+        # (자막 보정만 켠 경우는 준비가 안 돼도 보정만 건너뛰고 진행하므로 여기서 막지 않는다.)
         stage = self.stage_dd.value or _DEFAULT_STAGE
-        if stage in _STAGES_NEEDING_LLM and not _claude_cli_available():
-            self._set_status_now(
-                "'전체 (지식 문서화까지)' 단계에는 Claude Code CLI 가 필요합니다. "
-                "claude.com/claude-code 설치 후 `claude login` 으로 로그인하세요.",
-                ft.Colors.RED,
-            )
+        provider = self._current_provider()
+        if stage in _STAGES_NEEDING_LLM and not self._provider_ready(provider):
+            if provider == "gemini":
+                msg = (
+                    "Gemini 를 쓰려면 API 키가 필요합니다. aistudio.google.com/apikey 에서 "
+                    "발급해 '고급 옵션'에서 '키 저장'을 누르세요."
+                )
+            else:
+                msg = (
+                    "'전체 (지식 문서화까지)' 단계에는 Claude Code CLI 가 필요합니다. "
+                    "claude.com/claude-code 설치 후 `claude login`, 또는 제공자를 Gemini 로 바꾸세요."
+                )
+            self._set_status_now(msg, ft.Colors.RED)
             return
+        # 이번 실행의 프로바이더/모델/보정 선택을 저장(커스텀 입력 모델도 기억).
+        self._persist_llm_settings()
         self._stop.clear()
         self.page.run_thread(self._run)
+
+    @staticmethod
+    def _provider_ready(provider: str) -> bool:
+        """선택한 프로바이더로 LLM 호출이 가능한 상태인지(설치/인증)."""
+        if provider == "gemini":
+            return _genai_available() and has_gemini_api_key()
+        return _claude_cli_available()
 
     # -- 파이프라인(백그라운드 스레드) -----------------------------------
     def _run(self) -> None:
@@ -953,8 +1225,10 @@ class PipelineGUI:
                 update={"stt_first": bool(self.force_local_stt_cb.value)}
             ),
             llm=LLMConfig(
+                provider=self._current_provider(),
                 model=self._selected_llm_model() or base.llm.model,
                 max_chars_per_chunk=base.llm.max_chars_per_chunk,
+                repair_transcript=bool(self.repair_cb.value),
             ),
             output_dir=folder,
             data_dir=folder,
@@ -1306,6 +1580,10 @@ class PipelineGUI:
             self.language_field,
             self.stt_model_dd,
             self.stt_device_dd,
+            self.repair_cb,
+            self.gemini_key_field,
+            self.gemini_key_save_btn,
+            self.gemini_refresh_btn,
         )
         for control in base + self._llm_controls():
             control.disabled = running
@@ -1313,7 +1591,7 @@ class PipelineGUI:
         # 입력된 URL 내용에 맞춰 각각 다시 활성/비활성한다(둘 다 running=True 동안은 위에서
         # 일괄 잠겼다 — limit_field 는 base 에 있고 fetch_all_cb 는 채널 옵션 로직이 관리).
         if not running:
-            llm_enabled = (self.stage_dd.value or _DEFAULT_STAGE) in _STAGES_NEEDING_LLM
+            llm_enabled = self._llm_needed()
             for c in self._llm_controls():
                 c.disabled = not llm_enabled
             self._refresh_channel_options()

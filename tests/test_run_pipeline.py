@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 from yke import run
-from yke.config import Config
+from yke.config import Config, LLMConfig
 from yke.models import KnowledgeUnit, Segment
 from yke.utils import StoppedError
 
@@ -239,6 +239,79 @@ class TestRunPipeline(unittest.TestCase):
         self.assertEqual(data["done"], 1)
         self.assertIn("elapsed_seconds", data)
         self.assertEqual(len(data["videos"]), 1)
+
+
+class TestRepairPass(unittest.TestCase):
+    """트랜스크립트 확보 직후 LLM 자막 보정(cfg.llm.repair_transcript) 오케스트레이션."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cfg = Config(
+            videos=[],
+            data_dir=f"{self.tmp.name}/data",
+            output_dir=f"{self.tmp.name}/out",
+            llm=LLMConfig(provider="claude", repair_transcript=True),
+        )
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _fake_repair(self, segs, llm_cfg, client, *, log=print, should_stop=lambda: False):
+        return [s.model_copy(update={"text": s.text + "!"}) for s in segs]
+
+    def test_repair_runs_and_persists_when_enabled(self) -> None:
+        with (
+            mock.patch.object(run, "build_transcript", side_effect=_fake_bt),
+            mock.patch("yke.llm.make_client", return_value=mock.Mock()),
+            mock.patch.object(
+                run.stage_repair, "repair_segments", side_effect=self._fake_repair
+            ) as mrepair,
+        ):
+            res = run.run_pipeline(["u1"], self.cfg, stage="transcript")
+        self.assertTrue(mrepair.called)
+        self.assertFalse(res.stopped)
+        # 보정본이 transcript.json + transcript.txt 로 저장된다(원본 raw 는 보존).
+        from yke.paths import VideoPaths
+
+        vp = VideoPaths(Path(self.cfg.data_dir), "v_u1")
+        data = json.loads(vp.transcript.read_text(encoding="utf-8"))
+        self.assertEqual(data[0]["text"], "hi!")
+        self.assertTrue(vp.transcript_txt.exists())
+        self.assertIn("hi!", vp.transcript_txt.read_text(encoding="utf-8"))
+
+    def test_repair_skipped_gracefully_when_llm_unavailable(self) -> None:
+        events: list[run.Progress] = []
+        with (
+            mock.patch.object(run, "build_transcript", side_effect=_fake_bt),
+            mock.patch("yke.llm.make_client", side_effect=RuntimeError("no creds")),
+            mock.patch.object(run.stage_repair, "repair_segments") as mrepair,
+        ):
+            res = run.run_pipeline(["u1"], self.cfg, stage="transcript", on_progress=events.append)
+        # 자격증명이 없으면 보정만 건너뛰고 파이프라인은 계속된다(트랜스크립트는 확보됨).
+        self.assertFalse(mrepair.called)
+        self.assertEqual(res.video_count, 1)
+        self.assertTrue(any("자막 보정 건너뜀" in e.message for e in events))
+
+    def test_repair_not_run_when_disabled(self) -> None:
+        self.cfg.llm.repair_transcript = False
+        with (
+            mock.patch.object(run, "build_transcript", side_effect=_fake_bt),
+            mock.patch.object(run.stage_repair, "repair_segments") as mrepair,
+        ):
+            run.run_pipeline(["u1"], self.cfg, stage="transcript")
+        self.assertFalse(mrepair.called)
+
+    def test_repair_stop_returns_stopped(self) -> None:
+        def _stop_repair(segs, llm_cfg, client, *, log=print, should_stop=lambda: False):
+            raise StoppedError()
+
+        with (
+            mock.patch.object(run, "build_transcript", side_effect=_fake_bt),
+            mock.patch("yke.llm.make_client", return_value=mock.Mock()),
+            mock.patch.object(run.stage_repair, "repair_segments", side_effect=_stop_repair),
+        ):
+            res = run.run_pipeline(["u1"], self.cfg, stage="transcript")
+        self.assertTrue(res.stopped)
 
 
 class TestFmtHms(unittest.TestCase):
@@ -501,6 +574,51 @@ class TestBuildTranscriptPriority(unittest.TestCase):
                 "testvid", self._cfg(stt_first=True), self.data, False
             )
         self.assertEqual([s.text for s in segs], ["앞부분 내용", "뒷부분 내용"])
+
+    def test_writes_raw_json_and_txt_not_repaired_files(self):
+        # 보정 없는 경로: 원본 raw.json + raw.txt(+meta)만 생기고, 보정본(transcript.json)은 없다.
+        meta = self._meta(manual_sub_lang="ko")
+        parse = mock.Mock(
+            return_value=[
+                Segment(start=0, end=300, text="앞부분"),
+                Segment(start=305, end=600, text="뒷부분"),
+            ]
+        )
+
+        def stt(*a, **k):
+            raise AssertionError("자막 경로")
+
+        with self._patched(meta, stt, parse):
+            run.build_transcript("testvid", self._cfg(), self.data, False)
+        from yke.paths import VideoPaths
+
+        vp = VideoPaths(self.data, self.vid)
+        self.assertTrue(vp.transcript_raw.exists())
+        self.assertTrue(vp.transcript_raw_txt.exists())
+        self.assertFalse(vp.transcript.exists())  # 보정 안 했으니 보정본 없음
+        self.assertFalse(vp.transcript_txt.exists())
+        # txt 는 [MM:SS] 형식의 사람이 읽는 줄.
+        txt = vp.transcript_raw_txt.read_text(encoding="utf-8")
+        self.assertIn("[00:00] 앞부분", txt)
+        self.assertIn("[05:05] 뒷부분", txt)
+
+    def test_cache_hit_reads_raw_json(self):
+        # raw.json + meta 가 있으면 네트워크 조회(probe) 없이 캐시에서 로딩한다.
+        # (fast-path 는 URL 에서 11자 영상 ID 를 뽑으므로 유효한 ID 로 캐시를 만든다.)
+        vid11 = "abcdefghijk"
+        vp_root = self.data / vid11
+        vp_root.mkdir(parents=True)
+        (vp_root / "transcript.raw.json").write_text(
+            json.dumps([{"start": 0, "end": 1, "text": "캐시된 원본"}]), encoding="utf-8"
+        )
+        (vp_root / "meta.json").write_text(json.dumps(self._meta(id=vid11)), encoding="utf-8")
+        with mock.patch.object(
+            run.stage1_ingest, "probe", side_effect=AssertionError("캐시 히트면 probe 안 함")
+        ):
+            _vid, _m, segs = run.build_transcript(
+                f"https://youtu.be/{vid11}", self._cfg(), self.data, False
+            )
+        self.assertEqual([s.text for s in segs], ["캐시된 원본"])
 
 
 if __name__ == "__main__":

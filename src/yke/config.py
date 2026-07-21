@@ -54,8 +54,24 @@ class SubtitlesConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
+    # LLM 프로바이더: claude(로컬 Claude Code CLI) | gemini(Google Gemini, 사용자 API 키).
+    # 배포된 end-user 는 `claude` CLI 가 없으므로 본인 Gemini API 키(BYOK)로 gemini 를 쓴다.
+    # 실제 호출은 provider 에 무관한 llm.make_client(cfg.llm) 팩토리가 고른다.
+    provider: str = "claude"
+    # 활성 모델 ID. provider 에 맞는 값이어야 한다(claude-* / gemini-*). GUI 는 프로바이더를
+    # 바꿀 때 기본 모델도 함께 바꾼다. gemini 인데 claude-* 가 들어오면 GeminiClient 가
+    # 기본 gemini 모델로 대체한다(_resolve_model).
     model: str = "claude-opus-4-8"
     max_chars_per_chunk: int = 8000
+    # 트랜스크립트 확보(1~4단계) 직후 LLM 으로 자막을 보정할지. 업로더 수동 자막이나 유튜브
+    # 자동 자막이 깨진 채(오탈자·구두점 없음·인식 오류) 채택되는 경우를 교정한다(stage_repair).
+    # 타임스탬프는 보존하고 텍스트만 고친다. LLM 프로바이더 설정이 있어야 동작한다.
+    repair_transcript: bool = False
+    # 자막 보정 시 청크(LLM 호출)를 동시에 몇 개까지 처리할지. 보정 시간은 대부분 순차
+    # 왕복 대기라, 청크는 서로 독립적이므로 병렬로 돌리면 벽시계 시간이 크게 준다. 무료
+    # 티어의 분당 요청 제한(RPM)에 걸리면 실패 청크는 원본을 유지하므로, 제한이 빡빡하면
+    # 이 값을 낮춘다(1 이면 순차).
+    repair_concurrency: int = 4
 
 
 class Config(BaseModel):

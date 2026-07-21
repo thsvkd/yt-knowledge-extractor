@@ -29,7 +29,21 @@ class TestLoadConfig(unittest.TestCase):
         self.assertTrue(cfg.subtitles.use_manual)
         self.assertTrue(cfg.subtitles.use_auto_fallback)
         self.assertFalse(cfg.subtitles.stt_first)  # 수동 자막(업로더 제공) 우선이 기본
+        self.assertEqual(cfg.llm.provider, "claude")  # 기본 프로바이더는 Claude CLI
         self.assertEqual(cfg.llm.model, "claude-opus-4-8")
+        self.assertFalse(cfg.llm.repair_transcript)  # 자막 LLM 보정은 기본 off
+
+    def test_llm_provider_and_repair_override(self):
+        cfg = load_config(
+            self._write(
+                "videos: []\nllm:\n  provider: gemini\n  model: gemini-2.5-pro\n"
+                "  repair_transcript: true\n"
+            )
+        )
+        self.assertEqual(cfg.llm.provider, "gemini")
+        self.assertEqual(cfg.llm.model, "gemini-2.5-pro")
+        self.assertTrue(cfg.llm.repair_transcript)
+        self.assertEqual(cfg.llm.max_chars_per_chunk, 8000)  # 미지정 기본 유지
 
     def test_partial_override_keeps_other_defaults(self):
         cfg = load_config(

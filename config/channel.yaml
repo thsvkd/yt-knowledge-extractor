@@ -32,10 +32,13 @@ subtitles:
   min_coverage_ratio: 0.5   # 자막이 영상 길이의 이 비율 미만만 커버하면 '깨진 자막'으로 보고 건너뜀
   min_caption_segments: 2   # 자막 세그먼트가 이 미만이면(한 줄짜리) 건너뜀
 
-# 5·6단계 LLM
+# 자막 보정(4.5단계, 선택) · 5·6단계 LLM
 llm:
-  model: claude-opus-4-8
-  max_chars_per_chunk: 8000   # 추출 단계 트랜스크립트 청크 크기
+  provider: claude            # claude(로컬 Claude Code CLI) | gemini(Google Gemini, 본인 API 키)
+                              #   gemini 는 aistudio.google.com/apikey 에서 키 발급 후 GUI 에서 입력(keyring 보관)
+  model: claude-opus-4-8      # provider 에 맞는 모델 ID (claude-* 또는 gemini-2.5-flash / gemini-2.5-pro)
+  max_chars_per_chunk: 8000   # 추출·보정 단계 트랜스크립트 청크 크기
+  repair_transcript: false    # true 면 트랜스크립트 확보 직후 LLM 으로 깨진 자막을 교정(타임스탬프 보존)
 
 output_dir: output
 data_dir: data

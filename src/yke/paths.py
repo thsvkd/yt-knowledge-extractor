@@ -18,8 +18,24 @@ class VideoPaths:
         return self.root / "meta.json"
 
     @property
+    def transcript_raw(self) -> Path:
+        """원본 트랜스크립트(자막/STT 결과, 규칙 정제까지). 항상 생성된다."""
+        return self.root / "transcript.raw.json"
+
+    @property
+    def transcript_raw_txt(self) -> Path:
+        """원본 트랜스크립트의 사람이 읽는 txt 판(항상 생성)."""
+        return self.root / "transcript.raw.txt"
+
+    @property
     def transcript(self) -> Path:
+        """LLM 보정본 트랜스크립트(JSON). 자막 보정을 켰을 때만 생성되며 다운스트림의 정본."""
         return self.root / "transcript.json"
+
+    @property
+    def transcript_txt(self) -> Path:
+        """LLM 보정본의 사람이 읽는 txt 판(보정을 켰을 때만 생성)."""
+        return self.root / "transcript.txt"
 
     @property
     def units(self) -> Path:
