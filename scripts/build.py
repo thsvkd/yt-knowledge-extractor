@@ -28,12 +28,11 @@ from __future__ import annotations
 import argparse
 import os
 import platform
-import re
 import shutil
 import subprocess
 from pathlib import Path
 
-from _common import REPO_ROOT, check, fail, info, require_uv
+from _common import REPO_ROOT, check, fail, info, require_uv, sync_version
 from sign import find_signtool, maybe_sign_bundle, velopack_sign_params
 
 # flet build 메타데이터.
@@ -182,15 +181,6 @@ def compress_bundle(dst: Path) -> Path:
 
 
 # -- Velopack 설치기 / GPU 런타임 에셋 ---------------------------------------
-def _app_version() -> str:
-    """src/yke/__init__.py 의 __version__ 을 읽는다(Velopack packVersion 용)."""
-    init = REPO_ROOT / "src" / "yke" / "__init__.py"
-    m = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', init.read_text(encoding="utf-8"))
-    if not m:
-        fail("src/yke/__init__.py 에서 __version__ 을 찾지 못했습니다.")
-    return m.group(1)
-
-
 def _find_vpk() -> str:
     """Velopack CLI(vpk) 경로. PATH 또는 dotnet 글로벌 툴 기본 위치에서 찾는다."""
     exe = shutil.which("vpk")
@@ -292,6 +282,10 @@ def main() -> int:
     if target == "windows":
         ensure_windows_toolchain()
 
+    # pyproject.toml(SSOT)의 버전을 src/yke/__init__.py 에 반영한 뒤(flet build 가 이 파일을
+    # 그대로 복사해 번들에 담으므로 빌드 전에 최신 상태여야 한다) 빌드에 쓸 버전으로 쓴다.
+    version = sync_version()
+
     # flet build 의 rich 진행표시가 이모지를 stdout 에 쓰는데 한국어 Windows 콘솔 기본
     # 코덱(cp949)으로는 인코딩 불가 → UnicodeEncodeError 로 죽는다. 자식 Python 을 UTF-8
     # 모드로 강제해 회피한다(다른 OS 엔 무해).
@@ -313,7 +307,6 @@ def main() -> int:
 
     # Velopack 설치기(Windows). 다른 OS 는 폴더 zip 으로 폴백.
     if target == "windows":
-        version = _app_version()
         out = velopack_pack(dst, version)
         info(f"Velopack 산출물: {out}\\")
         # 자동업데이트·설치에 필요한 것만 올린다: Setup.exe(설치) + *.nupkg(full/delta 업데이트

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import argparse
 
-from _common import check, info, require_uv
+from _common import check, info, require_uv, sync_version
 
 
 def sync_dependencies(gpu: bool) -> None:
@@ -59,6 +59,7 @@ def main() -> int:
 
     require_uv()
     sync_dependencies(args.gpu)
+    sync_version()  # pyproject.toml(SSOT) 버전을 src/yke/__init__.py 에 반영.
     verify_import()
 
     info("환경 구성 완료. `python scripts/run.py` 로 앱을 실행하세요.")

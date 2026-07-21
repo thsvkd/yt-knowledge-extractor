@@ -119,6 +119,12 @@ CLI는 `data_dir`(캐시)와 `output_dir`(산출물)을 분리할 수 있고, GU
   NVIDIA 감지 시 `%LocalAppData%\…\gpu-runtime`(current\ 밖, 업데이트에도 유지)으로 내려받아
   STT 를 GPU 로 돌린다(`src/yke/gpu_runtime.py`, `stage3_stt._register_cuda_dll_dirs`). ctranslate2
   가 cuDNN 로더를 자체 번들하므로 cuBLAS 만 받으면 된다(실측 확인). CPU 설치기≈160MB.
+- **배포**: `scripts/deploy.py` → `pyproject.toml`의 `[project].version`(SSOT, 수동 변경
+  필요, 이전 릴리스와 같으면 중단) 확인 → `build.py` 빌드(이때 `src/yke/__init__.py`의
+  `__version__`을 pyproject.toml 기준으로 자동 동기화 — flet build가 앱을 site-packages로
+  정식 설치하지 않고 `src/`를 그대로 복사해 넣으므로 배포된 앱에서 `importlib.metadata`로
+  버전을 읽을 수 없어서다) → 이전 릴리스 태그 이후 커밋 로그를 `claude -p`에 넘겨(지침:
+  `scripts/release_notes_guide.md`) 릴리스 노트 생성 → GitHub 릴리스 생성 + 에셋 업로드.
 - **설치 · 자체 업데이트**: [Velopack](https://velopack.io)(Squirrel 후속) 사용. 설치본은
   `%LocalAppData%\YtKnowledgeExtractor\current\` **고정 경로**(OneDrive 로 리다이렉트된 폴더 경합
   회피)에 놓이고, GitHub Releases 의 `releases.win.json` + nupkg(**델타 우선**)로 갱신한다. 진입점

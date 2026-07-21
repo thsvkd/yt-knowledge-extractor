@@ -219,6 +219,7 @@ Windows 보안의 **제어된 폴더 액세스**(랜섬웨어 방지 기능)가 
 python scripts/setup.py         # 환경 구성: uv sync --extra vosk (GPU 가속: --gpu 추가)
 python scripts/run.py           # 앱 실행(GUI). CLI: python scripts/run.py --cli [옵션]
 python scripts/build.py         # 네이티브 데스크톱 앱 빌드 + 설치기 (GPU 온디맨드 에셋까지: --gpu-runtime)
+python scripts/deploy.py        # 버전 확인 -> 빌드 -> 릴리스 노트 생성 -> GitHub 릴리스 업로드
 python scripts/test.py          # 테스트 실행 (uv run pytest tests/; 인자는 그대로 pytest 로 전달)
 ```
 
@@ -270,6 +271,27 @@ python scripts/build.py --gpu-runtime   # 설치기 빌드 + cuBLAS 온디맨드
 - 결과물(기본): `dist/velopack/` — 릴리스에는 **`Setup.exe`(설치) + `*.nupkg`(full/delta 업데이트 페이로드) + `releases.win.json`(피드)** 세 종류만 올리면 앱이 자동 업데이트(변경분만 받는 **델타** 포함)에 사용합니다. `Portable.zip`(대용량)·`RELEASES`(레거시)·`assets.win.json`(로컬 인덱스)은 GithubSource 가 쓰지 않으므로 올리지 않습니다.
 - **GPU는 온디맨드**: CPU 설치기에는 cuBLAS를 넣지 않습니다(가볍게). NVIDIA 사용자는 앱의 **고급 옵션 → GPU 가속 다운로드**로 cuBLAS 런타임을 받습니다. 이 런타임 zip은 `--gpu-runtime`으로 만들어 `gpu-runtime-cu12` 릴리스에 한 번 올려 둡니다(앱 버전과 무관). GPU가 없으면 앱이 자동으로 CPU(int8)로 폴백합니다.
 - 사전 준비(Windows): Visual Studio "Desktop development with C++" 워크로드 + [Velopack CLI](https://velopack.io)(`dotnet tool install -g vpk`)가 필요합니다. Flutter SDK는 `flet build`가 필요 시 자동으로 다운로드합니다.
+
+**배포 (버전 릴리스 자동화)**
+
+`pyproject.toml`의 `version`(SSOT)을 먼저 올린 뒤(직접 수행 — 이전 릴리스와 버전이 같으면
+진행되지 않습니다) 실행하면, 빌드부터 GitHub 릴리스 업로드까지 한 번에 처리합니다.
+(`src/yke/__init__.py`의 `__version__`은 빌드 시 여기서 자동으로 반영되는 결과물이라 직접
+고치지 않습니다 — flet build가 앱을 site-packages로 정식 설치하지 않고 `src/`를 그대로
+복사해 넣어서, 배포된 앱 안에서는 `importlib.metadata`로 버전을 읽을 수 없기 때문입니다.)
+
+```bash
+python scripts/deploy.py            # 버전 확인 -> 빌드 -> 릴리스 노트 생성 -> 릴리스 생성/업로드
+python scripts/deploy.py --dry-run  # 릴리스 노트만 생성해 출력(빌드·업로드 없음)
+```
+
+- 릴리스 노트는 이전 릴리스 태그 이후의 git 커밋 로그를 `claude -p`에 넘겨 생성합니다. 작성
+  지침은 `scripts/release_notes_guide.md`에 있으며, 톤·형식을 바꾸고 싶으면 이 파일을 고치면
+  됩니다.
+- 사전 준비: 위 빌드 사전 준비 + [GitHub CLI](https://cli.github.com/)(`gh auth login`) +
+  [Claude Code CLI](https://claude.com/claude-code)(`claude login`).
+- GPU 온디맨드 런타임(`gpu-runtime-cu12` 릴리스)은 앱 버전과 무관해 이 스크립트가 다루지
+  않습니다. 필요할 때 `python scripts/build.py --gpu-runtime`으로 따로 올려 둡니다.
 
 **코드 서명 (선택, Windows)**
 
