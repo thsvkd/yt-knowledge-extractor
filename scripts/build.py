@@ -5,10 +5,8 @@
 런타임(gpu-runtime-cu12 릴리스)을 필요할 때 받는다(GPU 번들을 따로 배포하지 않는다).
 
 사용:
-    python scripts/build.py                 # CPU 번들 → Velopack 설치기(dist/velopack/)
-    python scripts/build.py --gpu-runtime   # cuBLAS 온디맨드 에셋 zip(dist/yke-gpu-runtime.zip)
-    python scripts/build.py --no-installer  # CPU 번들 폴더/zip 만(설치기 생략)
-    python scripts/build.py --gpu           # (로컬/수동) nvidia 포함 GPU 번들 폴더+zip
+    python scripts/build.py                 # Velopack 설치기(dist/velopack/)만 빌드
+    python scripts/build.py --gpu-runtime   # 설치기 빌드 + cuBLAS 온디맨드 에셋 zip(dist/yke-gpu-runtime.zip)
 
 결과물(기본):
     dist/yke-base-<platform>/  # flet 번들 폴더(설치기의 원본)
@@ -16,15 +14,9 @@
                                #   → 이 폴더 전체를 GitHub 릴리스에 올리면 자동 업데이트 동작
     서명: YKE_SIGN_THUMBPRINT/PFX 설정 시 Velopack 이 전 파일을 signtool 로 서명한다.
 
-CPU / GPU 차이:
-    STT(faster-whisper→ctranslate2)의 CUDA 가속에는 cuBLAS 런타임(nvidia-cublas-cu12)이
-    필요하다. --gpu 를 주면 이 패키지를 번들에 포함하고, 안 주면 CPU 전용으로 더 가볍게
-    빌드한다. GPU 번들이라도 GPU 가 없으면 앱이 자동으로 CPU(int8)로 폴백한다.
-    (cuDNN 은 ctranslate2 가 자체 번들하므로 nvidia-cudnn-cu12 는 넣지 않는다 - 실측 확인.)
-
-    구현: GPU 전용 flet build 를 따로 하지 않는다. CPU 를 한 번 빌드한 뒤 그 산출물을 복사하고
-    site-packages 에 cuBLAS 런타임만 얹어 GPU 번들을 만든다(두 변형의 유일한 차이가 nvidia
-    뿐이라 안전하고, GPU 빌드가 수 분 → 수십 초로 준다). CPU 번들이 이미 있으면 재사용한다.
+GPU 가속: STT(faster-whisper→ctranslate2)의 CUDA 가속에는 cuBLAS 런타임(nvidia-cublas-cu12)이
+    필요하지만 설치기에는 넣지 않는다. NVIDIA 사용자가 앱 안에서 온디맨드 에셋을 받으면 그때부터
+    GPU 로 동작하고, 받지 않았거나 GPU 가 없으면 자동으로 CPU(int8)로 폴백한다.
 
 사전 준비:
     - Windows: Visual Studio "Desktop development with C++" 워크로드(없으면 안내).
@@ -60,10 +52,9 @@ _APP_EXE = "yt-knowledge-extractor.exe"
 _GPU_RUNTIME_TAG = "gpu-runtime-cu12"
 _GPU_RUNTIME_ASSET = "yke-gpu-runtime.zip"
 
-# GPU 빌드에서 번들에 추가할 CUDA 런타임. ctranslate2 4.8 은 cuDNN 로더(cudnn64_9.dll)를
-# 자체 번들하고 whisper 추론에 cuDNN 서브라이브러리를 쓰지 않으므로(RTX 2080 실측 확인:
-# nvidia-cudnn 제거 후에도 GPU 추론 성공), cuBLAS 만 필요하다. nvidia-cudnn-cu12(약 1.1GB)는
-# 넣지 않아 GPU 번들이 2.4GB→약 1.15GB 로 줄어든다.
+# cuBLAS 온디맨드 에셋(build_gpu_runtime_asset)에 담을 CUDA 패키지. ctranslate2 4.8 은
+# cuDNN 로더(cudnn64_9.dll)를 자체 번들하고 whisper 추론에 cuDNN 서브라이브러리를 쓰지
+# 않으므로(RTX 2080 실측 확인: nvidia-cudnn 없이도 GPU 추론 성공), cuBLAS 만 있으면 된다.
 _GPU_DEPS = ("nvidia-cublas-cu12",)
 
 # Visual Studio C++ 빌드 도구 워크로드 식별자.
@@ -190,46 +181,6 @@ def compress_bundle(dst: Path) -> Path:
     return Path(archive)
 
 
-def make_gpu_from_cpu(cpu_dst: Path, target: str) -> Path:
-    """CPU 배포 폴더를 복사한 뒤 NVIDIA CUDA 런타임(cuBLAS/nvrtc) DLL 만 얹어 GPU 번들을 만든다.
-
-    두 변형의 유일한 차이는 ``site-packages/nvidia`` 뿐이므로 GPU 전용 flet build 를 생략하고
-    CPU 산출물을 그대로 재사용한다(GPU 빌드가 수 분 → 수십 초로 줄고, CPU 와 앱 코드가 100%
-    동일함이 보장된다). CPU exe 서명도 복사로 그대로 유지된다. nvidia 런타임은 임시 target 에
-    설치해 nvidia 패키지 디렉터리만 골라 옮긴다.
-    """
-    gpu_dst = REPO_ROOT / "dist" / f"yke-gpu-{target}"
-    if gpu_dst.exists():
-        shutil.rmtree(gpu_dst)
-    info(f"CPU 번들 복사 → {gpu_dst.name}")
-    shutil.copytree(cpu_dst, gpu_dst)
-    site = gpu_dst / "site-packages"
-    if not site.exists():
-        fail(f"CPU 번들에 site-packages 가 없습니다: {site}")
-
-    staging = REPO_ROOT / "build" / "_gpu_deps"
-    if staging.exists():
-        shutil.rmtree(staging)
-    info(f"NVIDIA CUDA 런타임 설치(임시): {', '.join(_GPU_DEPS)}")
-    check(["uv", "pip", "install", "--target", str(staging), *_GPU_DEPS])
-    # nvidia 패키지(런타임 폴더 + dist-info)만 번들 site-packages 로 옮긴다.
-    moved = [
-        item.name
-        for item in sorted(staging.iterdir())
-        if item.name == "nvidia" or item.name.startswith("nvidia_")
-    ]
-    for name in moved:
-        src, dest = staging / name, site / name
-        if dest.exists():
-            shutil.rmtree(dest) if dest.is_dir() else dest.unlink()
-        shutil.move(str(src), str(dest))
-    shutil.rmtree(staging)
-    if not moved:
-        fail("nvidia 런타임 패키지를 찾지 못했습니다(설치 실패?).")
-    info(f"nvidia 런타임 추가 완료: {', '.join(moved)}")
-    return gpu_dst
-
-
 # -- Velopack 설치기 / GPU 런타임 에셋 ---------------------------------------
 def _app_version() -> str:
     """src/yke/__init__.py 의 __version__ 을 읽는다(Velopack packVersion 용)."""
@@ -328,20 +279,10 @@ def build_gpu_runtime_asset() -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--gpu",
-        action="store_true",
-        help="(로컬/수동용) NVIDIA CUDA 런타임을 포함한 GPU 번들 폴더+zip. "
-        "배포 기본은 CPU 설치기 + GPU 온디맨드다.",
-    )
-    parser.add_argument(
         "--gpu-runtime",
         action="store_true",
-        help="cuBLAS 런타임 에셋 zip 만 만든다(gpu-runtime-cu12 릴리스에 올려 온디맨드로 배포).",
-    )
-    parser.add_argument(
-        "--no-installer",
-        action="store_true",
-        help="Velopack 설치기 생성을 건너뛰고 CPU 번들 폴더/zip 만 만든다.",
+        help="설치기 빌드에 더해 cuBLAS 런타임 에셋 zip 도 만든다"
+        "(gpu-runtime-cu12 릴리스에 올려 온디맨드로 배포).",
     )
     args = parser.parse_args()
 
@@ -351,58 +292,27 @@ def main() -> int:
     if target == "windows":
         ensure_windows_toolchain()
 
-    # cuBLAS 온디맨드 에셋만 만들고 끝낸다(앱 빌드와 독립).
-    if args.gpu_runtime:
-        asset = build_gpu_runtime_asset()
-        info(f"완료: GPU 런타임 에셋 {asset}  ({asset.stat().st_size / 1024 / 1024:.0f} MB)")
-        info(
-            f'업로드(한 번만): gh release create {_GPU_RUNTIME_TAG} "{asset}" '
-            f'--title "GPU runtime (cuBLAS cu12)" --notes "온디맨드 GPU 런타임"'
-        )
-        return 0
-
     # flet build 의 rich 진행표시가 이모지를 stdout 에 쓰는데 한국어 Windows 콘솔 기본
     # 코덱(cp949)으로는 인코딩 불가 → UnicodeEncodeError 로 죽는다. 자식 Python 을 UTF-8
     # 모드로 강제해 회피한다(다른 OS 엔 무해).
     build_env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
 
-    def build_cpu() -> Path:
-        """flet build 로 CPU 번들을 만들고(검증·서명 포함) 배포 폴더를 돌려준다."""
-        info("의존성 동기화 (uv sync)")
-        check(["uv", "sync"])
-        info(f"flet build {target} (cpu)")
-        check(
-            ["uv", "run", "--no-sync", "flet", "build", target,
-             "--product", _PRODUCT, "--org", _ORG],
-            env=build_env,
-        )
-        d = stash_output(target, "base")
-        verify_artifact(d, target)
-        # 앱 exe 서명(YKE_SIGN_THUMBPRINT/YKE_SIGN_PFX 설정 시). 인증서 미지정이면 미서명.
-        if target == "windows":
-            maybe_sign_bundle(d)
-        return d
+    info("의존성 동기화 (uv sync)")
+    check(["uv", "sync"])
+    info(f"flet build {target} (base)")
+    check(
+        ["uv", "run", "--no-sync", "flet", "build", target,
+         "--product", _PRODUCT, "--org", _ORG],
+        env=build_env,
+    )
+    dst = stash_output(target, "base")
+    verify_artifact(dst, target)
+    # 앱 exe 서명(YKE_SIGN_THUMBPRINT/YKE_SIGN_PFX 설정 시). 인증서 미지정이면 미서명.
+    if target == "windows":
+        maybe_sign_bundle(dst)
 
-    if args.gpu:
-        # (로컬/수동용) GPU 번들 = CPU 번들 + nvidia 런타임. GPU 전용 flet build 를 하지 않고
-        # CPU 산출물을 재사용한다(두 변형의 유일한 차이가 site-packages/nvidia 뿐). Velopack
-        # 설치기는 CPU 기준(온디맨드 GPU)이므로 여기선 폴더+zip 만 만든다.
-        cpu_dst = REPO_ROOT / "dist" / f"yke-base-{target}"
-        if cpu_dst.exists() and any(cpu_dst.iterdir()):
-            info(f"기존 base 번들 재사용: {cpu_dst}  (nvidia 런타임만 추가)")
-        else:
-            info("GPU 빌드에 쓸 CPU 번들이 없어 먼저 CPU 를 빌드합니다.")
-            cpu_dst = build_cpu()
-        dst = make_gpu_from_cpu(cpu_dst, target)
-        verify_artifact(dst, target)
-        archive = compress_bundle(dst)
-        info(f"배포 폴더: {dst}  (폴더째 배포·실행하세요)")
-        info(f"배포 압축본: {archive}  ({archive.stat().st_size / 1024 / 1024:.0f} MB)")
-        return 0
-
-    # 기본: CPU 번들 → Velopack 설치기(Windows). 다른 OS 는 폴더 zip 으로 폴백.
-    dst = build_cpu()
-    if target == "windows" and not args.no_installer:
+    # Velopack 설치기(Windows). 다른 OS 는 폴더 zip 으로 폴백.
+    if target == "windows":
         version = _app_version()
         out = velopack_pack(dst, version)
         info(f"Velopack 산출물: {out}\\")
@@ -417,6 +327,14 @@ def main() -> int:
         archive = compress_bundle(dst)
         info(f"배포 폴더: {dst}  (폴더째 배포·실행하세요)")
         info(f"배포 압축본: {archive}  ({archive.stat().st_size / 1024 / 1024:.0f} MB)")
+
+    if args.gpu_runtime:
+        asset = build_gpu_runtime_asset()
+        info(f"완료: GPU 런타임 에셋 {asset}  ({asset.stat().st_size / 1024 / 1024:.0f} MB)")
+        info(
+            f'업로드(한 번만): gh release create {_GPU_RUNTIME_TAG} "{asset}" '
+            f'--title "GPU runtime (cuBLAS cu12)" --notes "온디맨드 GPU 런타임"'
+        )
     return 0
 
 

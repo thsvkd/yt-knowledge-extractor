@@ -218,7 +218,7 @@ Windows 보안의 **제어된 폴더 액세스**(랜섬웨어 방지 기능)가 
 ```bash
 python scripts/setup.py         # 환경 구성: uv sync --extra vosk (GPU 가속: --gpu 추가)
 python scripts/run.py           # 앱 실행(GUI). CLI: python scripts/run.py --cli [옵션]
-python scripts/build.py         # 네이티브 데스크톱 앱 빌드 (GPU: --gpu)
+python scripts/build.py         # 네이티브 데스크톱 앱 빌드 + 설치기 (GPU 온디맨드 에셋까지: --gpu-runtime)
 python scripts/test.py          # 테스트 실행 (uv run pytest tests/; 인자는 그대로 pytest 로 전달)
 ```
 
@@ -263,9 +263,8 @@ uv run yke --limit 5              # 채널/재생목록에서 최근 5개만
 실행 OS를 감지해 flet 네이티브 앱을 빌드하고, Windows에서는 [Velopack](https://velopack.io) 설치기까지 만듭니다.
 
 ```bash
-python scripts/build.py                 # CPU 번들 → Velopack 설치기(dist/velopack/)
-python scripts/build.py --gpu-runtime   # cuBLAS 온디맨드 에셋 zip(GPU 가속 배포용)
-python scripts/build.py --no-installer  # CPU 번들 폴더/zip 만(설치기 생략)
+python scripts/build.py                 # Velopack 설치기(dist/velopack/)만 빌드
+python scripts/build.py --gpu-runtime   # 설치기 빌드 + cuBLAS 온디맨드 에셋 zip(GPU 가속 배포용)
 ```
 
 - 결과물(기본): `dist/velopack/` — 릴리스에는 **`Setup.exe`(설치) + `*.nupkg`(full/delta 업데이트 페이로드) + `releases.win.json`(피드)** 세 종류만 올리면 앱이 자동 업데이트(변경분만 받는 **델타** 포함)에 사용합니다. `Portable.zip`(대용량)·`RELEASES`(레거시)·`assets.win.json`(로컬 인덱스)은 GithubSource 가 쓰지 않으므로 올리지 않습니다.
