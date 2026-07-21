@@ -149,16 +149,18 @@ class TestResolveAliases(unittest.TestCase):
             out = gemini_client.resolve_aliases(("gemini-flash-latest",))
         self.assertEqual(out, {"gemini-flash-latest": "gemini-3.6-flash"})
 
-    def test_falls_back_to_version_when_name_echoes_alias(self) -> None:
+    def test_skips_when_name_echoes_alias(self) -> None:
+        # API 가 별칭 이름을 그대로 돌려주면 구체 ID 로 해석 못 한 것 → 생략(호출부가 라이브
+        # 목록에서 티어별 최신을 추정한다).
         m = mock.Mock(version="3.6")
-        m.name = "models/gemini-flash-latest"  # API 가 별칭 그대로 반환
+        m.name = "models/gemini-flash-latest"
         fake = mock.Mock()
         fake.models.get.return_value = m
         with mock.patch.object(gemini_client, "is_available", return_value=True), \
              mock.patch.object(gemini_client, "get_gemini_api_key", return_value="k"), \
              mock.patch("google.genai.Client", return_value=fake):
             out = gemini_client.resolve_aliases(("gemini-flash-latest",))
-        self.assertEqual(out, {"gemini-flash-latest": "3.6"})
+        self.assertEqual(out, {})
 
     def test_skips_unresolvable_alias(self) -> None:
         fake = mock.Mock()

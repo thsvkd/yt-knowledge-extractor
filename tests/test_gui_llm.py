@@ -13,11 +13,12 @@ from yke.gui import PipelineGUI
 
 
 class _DD:
-    """value/text 만 흉내내는 Dropdown 스텁."""
+    """value/text/options 만 흉내내는 Dropdown 스텁."""
 
-    def __init__(self, value=None, text=None):
+    def __init__(self, value=None, text=None, options=None):
         self.value = value
         self.text = text
+        self.options = options or []
 
 
 class TestLlmOptions(unittest.TestCase):
@@ -42,7 +43,9 @@ class TestSelectedModel(unittest.TestCase):
     def _gui(self, provider, value, text) -> PipelineGUI:
         g = object.__new__(PipelineGUI)
         g.llm_provider_dd = _DD(value=provider)
-        g.llm_model_dd = _DD(value=value, text=text)
+        # 실제 드롭다운처럼 현재 옵션(프리셋)을 실어, 라벨→키 역매핑을 검증한다.
+        opts = PipelineGUI._llm_options(value or "", provider)
+        g.llm_model_dd = _DD(value=value, text=text, options=opts)
         return g
 
     def test_preset_label_maps_to_id(self) -> None:
@@ -63,7 +66,7 @@ class TestSelectedModel(unittest.TestCase):
 
 
 class TestGeminiLiveOptions(unittest.TestCase):
-    def test_alias_annotated_and_live_appended(self) -> None:
+    def test_alias_shows_real_model_name(self) -> None:
         live = [
             ("gemini-3.6-flash", "Gemini 3.6 Flash"),
             ("gemini-2.5-flash", "Gemini 2.5 Flash"),  # 프리셋(안정)과 중복 → 라이브에서 생략
@@ -71,17 +74,43 @@ class TestGeminiLiveOptions(unittest.TestCase):
         targets = {"gemini-flash-latest": "gemini-3.6-flash"}
         opts = PipelineGUI._gemini_options(live, targets)
         by_key = {o.key: o.text for o in opts}
-        # 별칭은 해석된 구체 모델명을 병기한다.
-        self.assertIn("→ gemini-3.6-flash", by_key["gemini-flash-latest"])
+        # 별칭 라벨 = 해석된 구체 모델의 실제 표시명 + (최신).
+        self.assertEqual(by_key["gemini-flash-latest"], "Gemini 3.6 Flash (최신)")
         # 프리셋에 없는 구체 모델은 표시명+ID 로 추가된다.
         self.assertEqual(by_key["gemini-3.6-flash"], "Gemini 3.6 Flash (gemini-3.6-flash)")
         # 프리셋에 이미 있는 안정 ID 는 중복되지 않고 프리셋 라벨을 유지한다.
         self.assertEqual(by_key["gemini-2.5-flash"], "Gemini 2.5 Flash (안정)")
 
+    def test_alias_key_is_stable_id_not_label(self) -> None:
+        # value(key)는 항상 실제 모델 ID(별칭) — 선택 시 라벨이 아니라 이 ID 가 API 로 간다.
+        live = [("gemini-3.6-flash", "Gemini 3.6 Flash")]
+        opts = PipelineGUI._gemini_options(live, {"gemini-flash-latest": "gemini-3.6-flash"})
+        alias_opt = next(o for o in opts if o.text == "Gemini 3.6 Flash (최신)")
+        self.assertEqual(alias_opt.key, "gemini-flash-latest")
+
     def test_alias_without_target_stays_plain(self) -> None:
         opts = PipelineGUI._gemini_options([], {})
         by_key = {o.key: o.text for o in opts}
         self.assertEqual(by_key["gemini-flash-latest"], "Gemini Flash (최신)")
+
+
+class TestAliasTargets(unittest.TestCase):
+    def test_heuristic_picks_newest_per_tier(self) -> None:
+        live = [  # 최신 우선 정렬 가정
+            ("gemini-3.6-flash", "Gemini 3.6 Flash"),
+            ("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite"),
+            ("gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview"),
+            ("gemini-2.5-flash", "Gemini 2.5 Flash"),
+        ]
+        t = PipelineGUI._alias_targets(live, {})
+        self.assertEqual(t["gemini-flash-latest"], "gemini-3.6-flash")  # lite 제외
+        self.assertEqual(t["gemini-flash-lite-latest"], "gemini-3.5-flash-lite")
+        self.assertEqual(t["gemini-pro-latest"], "gemini-3.1-pro-preview")
+
+    def test_resolved_overrides_heuristic(self) -> None:
+        live = [("gemini-3.6-flash", "Gemini 3.6 Flash")]
+        t = PipelineGUI._alias_targets(live, {"gemini-flash-latest": "gemini-4-flash"})
+        self.assertEqual(t["gemini-flash-latest"], "gemini-4-flash")
 
 
 class TestProviderReady(unittest.TestCase):

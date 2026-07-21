@@ -668,16 +668,26 @@ class PipelineGUI:
     def _selected_llm_model(self) -> str:
         """언어 모델 드롭다운의 실제 선택값(모델 ID)을 얻는다.
 
-        editable 드롭다운이라 프리셋을 고르면 ``value``(키)가, 직접 입력하면 ``text``만
-        갱신될 수 있다. ``text``가 프리셋 라벨과 일치하면 그 키로, 아니면 입력값 그대로
-        (커스텀 모델 ID)를 쓴다. 비어 있으면 프로바이더 기본 모델로 폴백한다.
+        editable 드롭다운이라 옵션을 고르면 ``text`` 에는 사람이 읽는 **표시 라벨**(예:
+        "Gemini 3.6 Flash (최신)")이 들어갈 수 있다. 이 라벨을 그대로 모델 ID 로 보내면 API 가
+        거부하므로(unexpected model name format), 반드시 **현재 옵션의 key(모델 ID)로 역매핑**
+        한다. 매핑되지 않는 값은 사용자가 직접 입력한 커스텀 모델 ID 로 보고 그대로 쓴다.
+        비어 있으면 ``value`` 또는 프로바이더 기본 모델로 폴백한다.
         """
         provider = self._current_provider()
-        presets = _LLM_MODELS_BY_PROVIDER.get(provider, [])
+        opts = self.llm_model_dd.options or []
         text = (self.llm_model_dd.text or "").strip()
         if text:
-            by_label = {label: mid for label, mid in presets}
-            return by_label.get(text, text)
+            # 1) 현재 옵션의 표시 라벨과 일치 → 그 옵션의 key(모델 ID)
+            for o in opts:
+                if (o.text or "") == text:
+                    return o.key
+            # 2) (옵션이 아직 없을 때 대비) 프리셋 라벨과 일치
+            by_label = {label: mid for label, mid in _LLM_MODELS_BY_PROVIDER.get(provider, [])}
+            if text in by_label:
+                return by_label[text]
+            # 3) 라벨이 아니면 사용자가 직접 입력한 모델 ID → 그대로
+            return text
         return self.llm_model_dd.value or _DEFAULT_MODEL_BY_PROVIDER.get(provider, "")
 
     def _llm_controls(self) -> tuple[ft.Control, ...]:
@@ -891,22 +901,56 @@ class PipelineGUI:
         self._gui_settings["repair_transcript"] = bool(self.repair_cb.value)
         _save_gui_settings(self._gui_settings)
 
+    # -latest 별칭의 티어별 최신 구체 모델을 라이브 목록에서 추정할 때 제외할 특수 변형.
+    _ALIAS_EXCLUDE = ("lite", "image", "native", "thinking", "audio", "tts", "vision")
+
+    @classmethod
+    def _alias_targets(
+        cls, live_pairs: list[tuple[str, str]], resolved: dict[str, str]
+    ) -> dict[str, str]:
+        """각 -latest 별칭이 가리키는 구체 모델 ID.
+
+        라이브 목록(최신 우선 정렬)에서 티어별 최신을 골라 채우고, ``client.models.get`` 이
+        확실히 해석해 준 값(resolved)이 있으면 그걸 우선한다.
+        """
+        ids = [mid for mid, _d in live_pairs]
+
+        def _pick(*must: str, without: tuple[str, ...] = ()) -> str | None:
+            for mid in ids:  # live_pairs 는 이미 최신 우선
+                if all(k in mid for k in must) and not any(k in mid for k in without):
+                    return mid
+            return None
+
+        targets = {
+            "gemini-flash-latest": _pick("flash", without=cls._ALIAS_EXCLUDE),
+            "gemini-pro-latest": _pick("pro", without=("lite",)),
+            "gemini-flash-lite-latest": _pick("flash-lite"),
+        }
+        targets = {a: t for a, t in targets.items() if t}
+        targets.update({a: t for a, t in resolved.items() if t})  # models.get 결과 우선
+        return targets
+
     @staticmethod
     def _gemini_options(
         live_pairs: list[tuple[str, str]], alias_targets: dict[str, str]
     ) -> list[ft.dropdown.Option]:
-        """드롭다운 옵션 = 프리셋(항상-최신 별칭) 먼저 + 라이브 구체 버전 추가.
+        """드롭다운 옵션 = 별칭(실제 최신 모델명 표시) 먼저 + 라이브 구체 버전.
 
-        별칭(gemini-*-latest)은 항상 위에 남겨 사용자가 '최신'을 계속 고를 수 있게 하고,
-        해석된 구체 모델명이 있으면 라벨에 병기한다(예: "Gemini Flash (최신) → gemini-3.6-flash").
-        그 아래에 API 가 실제로 주는 구체 버전을 표시명과 함께 붙인다(예: "Gemini 3.6 Flash").
+        별칭(gemini-*-latest) 라벨은 해석된 구체 모델의 **실제 표시명**을 쓴다
+        (예: "Gemini 3.6 Flash (최신)"). 해석 못 하면 generic 프리셋 라벨로 폴백한다.
+        value(key)는 항상 실제 모델 ID 이므로, 선택 시 그 ID 가 API 로 전달된다.
         """
         presets = _LLM_MODELS_BY_PROVIDER["gemini"]
         preset_ids = {mid for _l, mid in presets}
+        display_by_id = dict(live_pairs)
         options: list[ft.dropdown.Option] = []
         for label, mid in presets:
             target = alias_targets.get(mid)
-            text = f"{label} → {target}" if target else label
+            if target:
+                disp = display_by_id.get(target, target)
+                text = f"{disp} (최신)"
+            else:
+                text = label
             options.append(ft.dropdown.Option(key=mid, text=text))
         for mid, display in live_pairs:
             if mid in preset_ids:
@@ -915,16 +959,22 @@ class PipelineGUI:
             options.append(ft.dropdown.Option(key=mid, text=text))
         return options
 
+    def _apply_gemini_models(self) -> list[tuple[str, str]]:
+        """(백그라운드용) 라이브 모델을 불러와 드롭다운 옵션을 갱신한다. 반환=라이브 목록."""
+        live = _list_gemini_models()
+        if not live:
+            return []
+        targets = self._alias_targets(live, _resolve_gemini_aliases())
+        self.llm_model_dd.options = self._gemini_options(live, targets)
+        self._safe_update(self.llm_model_dd)
+        return live
+
     def _refresh_gemini_models(self) -> None:
-        """(백그라운드) API 키로 사용 가능한 Gemini 모델(+별칭 해석)을 불러와 드롭다운을 채운다.
+        """(백그라운드) API 키로 사용 가능한 Gemini 모델을 불러와 드롭다운을 채운다.
 
         실패/키 없음이면 정적 프리셋을 그대로 둔다(현재 선택값은 건드리지 않는다).
         """
-        live = _list_gemini_models()
-        if not live:
-            return
-        self.llm_model_dd.options = self._gemini_options(live, _resolve_gemini_aliases())
-        self._safe_update(self.llm_model_dd)
+        self._apply_gemini_models()
 
     def _on_refresh_models(self) -> None:
         """'새로고침' 버튼 — 상태를 보여주며 Gemini 모델 목록을 다시 불러온다."""
@@ -932,10 +982,8 @@ class PipelineGUI:
         self.page.run_thread(self._refresh_models_with_status)
 
     def _refresh_models_with_status(self) -> None:
-        live = _list_gemini_models()
+        live = self._apply_gemini_models()
         if live:
-            self.llm_model_dd.options = self._gemini_options(live, _resolve_gemini_aliases())
-            self._safe_update(self.llm_model_dd)
             self._set_cred_status(
                 f"Gemini API 키 설정됨 ✓ · 사용 가능 모델 {len(live)}개", ft.Colors.GREEN
             )

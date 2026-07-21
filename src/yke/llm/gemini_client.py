@@ -86,11 +86,11 @@ def list_generate_models() -> list[tuple[str, str]]:
 
 
 def resolve_aliases(aliases: tuple[str, ...] = _LATEST_ALIASES) -> dict[str, str]:
-    """각 '-latest' 별칭이 지금 가리키는 구체 모델 이름을 조회한다.
+    """각 '-latest' 별칭이 지금 가리키는 **구체 모델 ID** 를 조회한다.
 
     ``client.models.get(alias)`` 가 돌려주는 실제 모델 이름(예: gemini-flash-latest →
-    gemini-3.6-flash)을 반환한다. 이름이 별칭 그대로면 version 을 대신 쓴다. 해석하지 못한
-    별칭은 결과에서 생략한다(키 없음/미지원이면 빈 dict — 라벨은 그냥 '최신'으로 남는다).
+    gemini-3.6-flash)을 반환한다. 별칭을 구체 ID 로 해석하지 못하면(이름이 별칭 그대로거나
+    호출 실패) 그 별칭은 생략한다 — 호출부는 라이브 목록에서 티어별 최신을 추정해 채운다.
     """
     if not is_available():
         return {}
@@ -107,8 +107,6 @@ def resolve_aliases(aliases: tuple[str, ...] = _LATEST_ALIASES) -> dict[str, str
         name = (getattr(m, "name", "") or "").split("/")[-1]
         if name and name != alias:
             out[alias] = name
-        elif getattr(m, "version", None):
-            out[alias] = str(m.version)
     return out
 
 
