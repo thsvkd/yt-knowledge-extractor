@@ -6,12 +6,12 @@
 
 사용:
     python scripts/build.py                 # CPU 번들 → Velopack 설치기(dist/velopack/)
-    python scripts/build.py --gpu-runtime   # cuBLAS 온디맨드 에셋 zip(dist/…-cublas-cu12.zip)
+    python scripts/build.py --gpu-runtime   # cuBLAS 온디맨드 에셋 zip(dist/yke-gpu-runtime.zip)
     python scripts/build.py --no-installer  # CPU 번들 폴더/zip 만(설치기 생략)
     python scripts/build.py --gpu           # (로컬/수동) nvidia 포함 GPU 번들 폴더+zip
 
 결과물(기본):
-    dist/yke-cpu-<platform>/    # flet 번들 폴더(설치기의 원본)
+    dist/yke-base-<platform>/  # flet 번들 폴더(설치기의 원본)
     dist/velopack/             # Setup.exe + *-full/delta.nupkg + releases.win.json
                                #   → 이 폴더 전체를 GitHub 릴리스에 올리면 자동 업데이트 동작
     서명: YKE_SIGN_THUMBPRINT/PFX 설정 시 Velopack 이 전 파일을 signtool 로 서명한다.
@@ -58,7 +58,7 @@ _APP_EXE = "yt-knowledge-extractor.exe"
 # cuBLAS 런타임 온디맨드 에셋(gpu_runtime.GPU_RUNTIME_TAG/ASSET 과 일치). 앱 버전과 무관해
 # 이 전용 태그에 한 번만 올려 두면 CPU 설치본이 필요 시 받아 쓴다.
 _GPU_RUNTIME_TAG = "gpu-runtime-cu12"
-_GPU_RUNTIME_ASSET = "yke-gpu-runtime-cublas-cu12.zip"
+_GPU_RUNTIME_ASSET = "yke-gpu-runtime.zip"
 
 # GPU 빌드에서 번들에 추가할 CUDA 런타임. ctranslate2 4.8 은 cuDNN 로더(cudnn64_9.dll)를
 # 자체 번들하고 whisper 추론에 cuDNN 서브라이브러리를 쓰지 않으므로(RTX 2080 실측 확인:
@@ -376,7 +376,7 @@ def main() -> int:
              "--product", _PRODUCT, "--org", _ORG],
             env=build_env,
         )
-        d = stash_output(target, "cpu")
+        d = stash_output(target, "base")
         verify_artifact(d, target)
         # 앱 exe 서명(YKE_SIGN_THUMBPRINT/YKE_SIGN_PFX 설정 시). 인증서 미지정이면 미서명.
         if target == "windows":
@@ -387,9 +387,9 @@ def main() -> int:
         # (로컬/수동용) GPU 번들 = CPU 번들 + nvidia 런타임. GPU 전용 flet build 를 하지 않고
         # CPU 산출물을 재사용한다(두 변형의 유일한 차이가 site-packages/nvidia 뿐). Velopack
         # 설치기는 CPU 기준(온디맨드 GPU)이므로 여기선 폴더+zip 만 만든다.
-        cpu_dst = REPO_ROOT / "dist" / f"yke-cpu-{target}"
+        cpu_dst = REPO_ROOT / "dist" / f"yke-base-{target}"
         if cpu_dst.exists() and any(cpu_dst.iterdir()):
-            info(f"기존 CPU 번들 재사용: {cpu_dst}  (nvidia 런타임만 추가)")
+            info(f"기존 base 번들 재사용: {cpu_dst}  (nvidia 런타임만 추가)")
         else:
             info("GPU 빌드에 쓸 CPU 번들이 없어 먼저 CPU 를 빌드합니다.")
             cpu_dst = build_cpu()

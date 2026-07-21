@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 _APP_ID = "YtKnowledgeExtractor"
 # cuBLAS 런타임 zip 을 올려 둔 전용 릴리스 태그/에셋(build.py 가 생성).
 GPU_RUNTIME_TAG = "gpu-runtime-cu12"
-GPU_RUNTIME_ASSET = "yke-gpu-runtime-cublas-cu12.zip"
+GPU_RUNTIME_ASSET = "yke-gpu-runtime.zip"
 _DOWNLOAD_URL = f"{REPO_URL}/releases/download/{GPU_RUNTIME_TAG}/{GPU_RUNTIME_ASSET}"
 _USER_AGENT = "yke-gpu-runtime"
 

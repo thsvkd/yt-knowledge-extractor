@@ -291,7 +291,7 @@ python scripts/build.py
   신뢰되며 **SmartScreen 경고는 없애지 못합니다**(본인·소수 배포용). 넓은 배포에는 정식 CA
   인증서나 오픈소스 무료 서명([SignPath Foundation](https://signpath.org/))이 필요합니다.
 - 정식 `.pfx` 인증서가 있으면 지문 대신 `YKE_SIGN_PFX`(+`YKE_SIGN_PFX_PASSWORD`)로 지정합니다.
-- 이미 빌드된 폴더를 재서명하려면: `python scripts/sign.py dist/yke-cpu-windows`
+- 이미 빌드된 폴더를 재서명하려면: `python scripts/sign.py dist/yke-base-windows`
 
 **테스트**
 
