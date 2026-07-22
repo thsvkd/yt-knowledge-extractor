@@ -15,6 +15,15 @@ import tomllib
 from pathlib import Path
 from typing import NoReturn
 
+# 콘솔이 UTF-8 이 아니면(한국어 Windows 기본 cp949) 이 스크립트들의 안내 문구에 흔한
+# 이모지·em-dash(—)·줄임표(…) 등에서 UnicodeEncodeError 로 죽는다(실제로 겪음: flet build
+# 자체 출력은 build.py 가 자식 프로세스에 PYTHONUTF8 을 넘겨 무사하지만, info()/fail() 같은
+# 이 프로세스 자신의 출력은 보호되지 않았다). 이 모듈을 import 하는 모든 스크립트에 한 번만
+# 적용되도록 여기서 강제한다.
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # 저장소 루트(scripts/ 의 부모). 모든 명령은 이 위치에서 실행한다.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _INIT_PATH = REPO_ROOT / "src" / "yke" / "__init__.py"

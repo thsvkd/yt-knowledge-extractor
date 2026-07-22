@@ -35,13 +35,6 @@ import sys
 
 from _common import REPO_ROOT, check, fail, info, pyproject_version
 
-# 콘솔이 UTF-8 이 아니면(한국어 Windows 기본 cp949) 릴리스 노트(claude -p 가 생성한 임의의
-# 텍스트) 출력 중 인코딩 불가 문자에서 UnicodeEncodeError 로 죽는다 — 이 스크립트 자체
-# 출력(도움말·릴리스 노트 등)은 UTF-8 로 강제한다.
-if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-
 _VERSION_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
 _GUIDE_PATH = REPO_ROOT / "scripts" / "release_notes_guide.md"
 _CLAUDE_TIMEOUT = 300  # 커밋 로그 요약이라 5분이면 충분히 여유 있다.
@@ -172,12 +165,14 @@ def main() -> int:
 
     out_dir = REPO_ROOT / "dist" / "velopack"
     setup_exes = sorted(out_dir.glob("*-Setup.exe"))
-    nupkgs = sorted(out_dir.glob("*.nupkg"))
+    # 이번 버전(tag)의 nupkg만 고른다 — vpk 가 델타 계산 기준으로 내려받은 이전 버전
+    # nupkg 도 out_dir 에 함께 있으므로 "*.nupkg" 로 다 주우면 안 된다.
+    nupkgs = sorted(out_dir.glob(f"*-{version}-*.nupkg"))
     releases_json = out_dir / "releases.win.json"
     if not setup_exes:
         fail(f"{out_dir} 에서 *-Setup.exe 를 찾지 못했습니다(빌드 실패?).")
     if not nupkgs:
-        fail(f"{out_dir} 에서 *.nupkg 를 찾지 못했습니다(빌드 실패?).")
+        fail(f"{out_dir} 에서 {version} 의 nupkg 를 찾지 못했습니다(빌드 실패?).")
     if not releases_json.exists():
         fail(f"{releases_json} 이 없습니다(빌드 실패?).")
 
