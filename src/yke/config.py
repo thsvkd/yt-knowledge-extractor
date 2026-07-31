@@ -9,10 +9,11 @@ from pydantic import BaseModel
 
 
 class STTConfig(BaseModel):
-    # faster-whisper(AI, 기본, 정확도 높음) | vosk(경량 오프라인 엔진, non-AI 옵션 — Kaldi
-    # 기반, 완전 오프라인·초경량이지만 정확도는 faster-whisper 보다 낮다). 자막이 깨져
-    # STT 로 폴백할 때 어느 엔진을 쓸지 고른다. vosk 는 `uv sync --extra vosk` 로 설치해야
-    # 쓸 수 있다(stage3_stt_vosk 모듈 참고).
+    # faster-whisper(AI, 기본, 정확도 높음) | sherpa(경량 오프라인 엔진 — Next-gen Kaldi
+    # 계열 sherpa-onnx, 수십 MB 모델로 CPU 에서 매우 빠르지만 정확도는 faster-whisper 보다
+    # 낮다). 자막이 깨져 STT 로 폴백할 때 어느 엔진을 쓸지 고른다. sherpa 는
+    # `uv sync --extra sherpa` 로 설치해야 쓸 수 있다(stage3_stt_sherpa 모듈 참고).
+    # 예전 값 "vosk" 도 받아 sherpa 로 처리한다(Vosk 는 macOS 휠 배포가 끊겨 대체됨).
     engine: str = "faster-whisper"
     # auto → 장치별 기본(GPU:large-v3 / CPU:small, stage3_stt._resolve_model).
     # 명시하려면 tiny|base|small|medium|large-v3. (engine: faster-whisper 전용)
@@ -33,9 +34,9 @@ class STTConfig(BaseModel):
     # 수(os.cpu_count())를 그대로 쓰면 스레드 경합으로 오히려 느려지므로, 명시값을 넣을
     # 땐 물리 코어 수를 권장한다. (engine: faster-whisper 전용, GPU 에서는 무시됨)
     cpu_threads: int = 0
-    # engine="vosk" 일 때만 쓰는 모델 크기. small|large. 언어별로 large 가 없으면(예:
-    # 한국어는 small 뿐) small 로 자동 대체된다(stage3_stt_vosk._MODEL_CATALOG 참고).
-    vosk_model_size: str = "small"
+    # engine="sherpa" 일 때만 쓰는 모델 크기. small|large. 언어별로 large 가 없으면(예:
+    # 한국어는 small 뿐) small 로 자동 대체된다(stage3_stt_sherpa._MODEL_CATALOG 참고).
+    sherpa_model_size: str = "small"
 
 
 class SubtitlesConfig(BaseModel):

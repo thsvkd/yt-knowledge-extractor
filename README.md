@@ -227,7 +227,7 @@ Windows 보안의 **제어된 폴더 액세스**(랜섬웨어 방지 기능)가 
 아래 `uv`/`flet` 명령을 감싼 편의 스크립트가 있습니다(모두 `--help` 지원).
 
 ```bash
-python scripts/setup.py         # 환경 구성: uv sync --extra vosk (GPU 가속: --gpu 추가)
+python scripts/setup.py         # 환경 구성: uv sync --extra sherpa (GPU 가속: --gpu 추가)
 python scripts/run.py           # 앱 실행(GUI). CLI: python scripts/run.py --cli [옵션]
 python scripts/build.py         # 네이티브 데스크톱 앱 빌드 + 설치기 (GPU 온디맨드 에셋까지: --gpu-runtime)
 python scripts/deploy.py        # 버전 확인 -> 빌드 -> 릴리스 노트 생성 -> GitHub 릴리스 업로드
@@ -239,7 +239,7 @@ python scripts/test.py          # 테스트 실행 (uv run pytest tests/; 인자
 **설치**
 
 ```bash
-uv sync --extra vosk   # 기본. GPU 가속까지 포함하려면: uv sync --extra vosk --extra gpu
+uv sync --extra sherpa # 기본. GPU 가속까지 포함하려면: uv sync --extra sherpa --extra gpu
 ```
 
 **설정**
@@ -251,7 +251,10 @@ uv sync --extra vosk   # 기본. GPU 가속까지 포함하려면: uv sync --ext
 > 없으면 `int8`을 자동 선택하며, GPU 사용이 실패하면 CPU(int8)로 폴백합니다.
 > (`stt.device: cuda`로 고정하면 CTranslate2용 CUDA 런타임이 필요합니다.)
 > 기본 엔진은 `faster-whisper`(AI, 정확도 우선)이며, 완전 오프라인·초경량 대안으로
-> `stt.engine: vosk`를 선택할 수 있습니다(정확도는 더 낮음). GUI에서는 드롭다운으로 고릅니다.
+> `stt.engine: sherpa`를 선택할 수 있습니다(정확도는 더 낮음). GUI에서는 드롭다운으로 고릅니다.
+> 경량 엔진은 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)를 쓰며, 한국어 모델
+> (Moonshine tiny, 49MB)을 최초 1회 `~/.cache/yke/sherpa-models/`에 내려받습니다. GPU 없이
+> CPU만으로 실시간의 수십 배 속도로 처리합니다(실측 RTF 0.018, Apple Silicon 기준).
 
 **실행 (GUI)**
 

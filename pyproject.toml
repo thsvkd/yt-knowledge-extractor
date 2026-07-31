@@ -40,16 +40,22 @@ dependencies = [
 # 번들하고 whisper 추론엔 cuBLAS 만 쓰므로(RTX 2080 실측 확인) cuBLAS 만 넣는다.
 # 설치: `uv sync --extra gpu`  (CPU 전용 환경에서는 불필요)
 gpu = ["nvidia-cublas-cu12"]
-# non-AI STT 대안 엔진(Vosk, 경량 오프라인, stage3_stt_vosk 참고). 대부분의 사용자는 쓰지
-# 않는 대안 경로라 gpu 와 같은 이유로 optional 로 둔다. 설치: `uv sync --extra vosk`
+# 경량 오프라인 STT 대안 엔진(sherpa-onnx, stage3_stt_sherpa 참고). 대부분의 사용자는 쓰지
+# 않는 대안 경로라 gpu 와 같은 이유로 optional 로 둔다. 설치: `uv sync --extra sherpa`
 #
-# 플랫폼별 버전: vosk 0.3.45 는 리눅스/윈도우 휠만 내고 macOS 휠을 빼서, macOS(특히 Apple
-# Silicon)에서 `uv sync --extra vosk` 가 "no wheel for the current platform" 으로 실패한다.
-# macOS 휠(universal2, Intel·Apple Silicon 겸용)이 있는 마지막 버전이 0.3.44 이므로 그쪽만
-# 고정한다. 배포 대상(Windows)과 CI 는 계속 최신을 쓴다.
-vosk = [
-    "vosk>=0.3.45; sys_platform != 'darwin'",
-    "vosk==0.3.44; sys_platform == 'darwin'",
+# 이 자리에는 원래 Vosk 가 있었으나, PyPI 릴리스가 0.3.45(2022-12)에서 멈추고 macOS 휠은
+# 0.3.44(2022-09)가 마지막이라 macOS(특히 Apple Silicon)에서 설치 자체가 실패했다.
+# sherpa-onnx 는 같은 Kaldi 계보(k2-fsa)의 후속으로 Windows·macOS(Intel/Apple Silicon)·
+# Linux 휠을 모두 제공하고 월 단위로 릴리스된다(2026-07 기준 1.13.x).
+#
+# 두 패키지를 같은 버전으로 함께 고정한다: sherpa-onnx 휠은 네이티브 런타임
+# (libonnxruntime)이 든 sherpa-onnx-core 를 `==같은 버전`으로 요구하지만, uv 는 이
+# 패키지를 sdist 메타데이터 기준으로 잠가 그 의존성을 못 본다(실측: core 가 빠진 채
+# 설치돼 import 시 libonnxruntime 을 못 찾고 죽음). 버전을 올릴 땐 둘 다 같이 올린다
+# (flet-desktop/flet-cli 를 같은 버전으로 묶는 것과 같은 이유).
+sherpa = [
+    "sherpa-onnx==1.13.4",
+    "sherpa-onnx-core==1.13.4",
 ]
 
 [project.scripts]
@@ -62,6 +68,13 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/yke"]
+
+[tool.uv]
+# sherpa-onnx 는 소스 빌드를 금지하고 배포 휠만 쓴다. 소스(sdist)로 떨어지면 uv 가 그
+# 빌드 메타데이터를 잠가 네이티브 런타임 패키지(sherpa-onnx-core)가 빠지고, import 시
+# libonnxruntime 을 못 찾아 죽는다(macOS arm64 에서 실측). 게다가 소스 빌드는 CMake
+# 툴체인이 필요해 사용자 환경에서 실패한다 — 전 플랫폼 휠이 제공되므로 휠만 쓰면 된다.
+no-build-package = ["sherpa-onnx"]
 
 [dependency-groups]
 # flet-cli 는 `flet build`(네이티브 빌드) 전용 도구다. 선언하지 않으면 `uv sync` 가

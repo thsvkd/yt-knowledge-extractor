@@ -515,7 +515,9 @@ def build_transcript(
             return None
         try:
             engine = cfg.stt.engine
-            engine_desc = cfg.stt.model if engine == "faster-whisper" else f"vosk/{cfg.stt.vosk_model_size}"
+            engine_desc = (
+                cfg.stt.model if engine == "faster-whisper" else f"sherpa/{cfg.stt.sherpa_model_size}"
+            )
             _substep("stt", f"[{vid}] STT 실행 ({engine} {engine_desc})...")
             segs = stage3_stt.transcribe(
                 audio,

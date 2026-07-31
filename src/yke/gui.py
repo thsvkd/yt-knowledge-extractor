@@ -58,11 +58,13 @@ _LOG_PANEL_HEIGHT = 260
 _UI_TICK_SECONDS = 0.15
 
 # 스크립트 변환(STT) 모델 선택지. "auto" 는 장치별 기본(GPU:large-v3 / CPU:small)으로,
-# 대부분의 사용자에게 권장되는 기본값이다. (engine: faster-whisper 전용 — vosk 선택 시 무시됨)
+# 대부분의 사용자에게 권장되는 기본값이다. (engine: faster-whisper 전용 — 경량 모델 선택 시 무시됨)
 _STT_MODELS = ("auto", "tiny", "base", "small", "medium", "large-v3")
-# STT 엔진 선택지: (표시명, stt.engine 값). faster-whisper(AI, 기본)와 vosk(경량 오프라인,
-# non-AI 옵션 — `uv sync --extra vosk` 필요, 정확도는 낮지만 완전 오프라인·초경량) 중 선택.
-_STT_ENGINES = [("AI 모델 (faster-whisper)", "faster-whisper"), ("경량 모델 (Vosk, non-AI)", "vosk")]
+# STT 엔진 선택지: (표시명, stt.engine 값). faster-whisper(AI, 기본)와 sherpa-onnx(경량
+# 오프라인 — `uv sync --extra sherpa` 필요, 정확도는 낮지만 완전 오프라인·초경량) 중 선택.
+_STT_ENGINES = [("AI 모델 (faster-whisper)", "faster-whisper"), ("경량 모델 (sherpa-onnx)", "sherpa")]
+# 예전 GUI 설정에 저장돼 있을 수 있는 엔진 값 → 현재 값. Vosk 는 sherpa-onnx 로 교체됐다.
+_STT_ENGINE_ALIASES = {"vosk": "sherpa", "sherpa-onnx": "sherpa"}
 # GPU 가속 선택지: (표시명, stt.device 값).
 _DEVICE_CHOICES = [("자동", "auto"), ("사용", "cuda"), ("사용 안함", "cpu")]
 # 실행 단계 선택지: (표시명, run_pipeline stage 값). 기본값은 '스크립트 추출까지'.
@@ -360,13 +362,16 @@ class PipelineGUI:
         # 고급 옵션(접이식).
         self.language_field = ft.TextField(label="언어", value=cfg.language, width=110)
         _engine_vals = {v for _l, v in _STT_ENGINES}
+        # 예전 설정에 저장된 값(vosk 등)은 현재 값으로 옮겨, 저장해 둔 '경량 모델' 선택이
+        # 조용히 AI 모델로 되돌아가지 않게 한다.
+        _engine = _STT_ENGINE_ALIASES.get(cfg.stt.engine, cfg.stt.engine)
         self.stt_engine_dd = ft.Dropdown(
             label="STT 엔진",
-            value=cfg.stt.engine if cfg.stt.engine in _engine_vals else "faster-whisper",
+            value=_engine if _engine in _engine_vals else "faster-whisper",
             width=190,
             tooltip=(
                 "AI 모델: faster-whisper(정확도 높음, 기본). "
-                "경량 모델: Vosk(완전 오프라인·초경량, 정확도는 낮음 — 아래 모델/GPU 설정은 무시됨)"
+                "경량 모델: sherpa-onnx(완전 오프라인·초경량, 정확도는 낮음 — 아래 모델/GPU 설정은 무시됨)"
             ),
             options=[ft.dropdown.Option(key=v, text=label) for label, v in _STT_ENGINES],
         )
@@ -1275,7 +1280,7 @@ class PipelineGUI:
             videos=self._urls(),
             language=self.language_field.value.strip() or "ko",
             # UI 로 노출한 engine/model/device 만 덮어쓰고, 노출하지 않는 나머지 STT 필드
-            # (compute_type/word_timestamps/batched/batch_size/cpu_threads/vosk_model_size
+            # (compute_type/word_timestamps/batched/batch_size/cpu_threads/sherpa_model_size
             # 등, 미래 필드 포함)는 base 설정에서 그대로 계승한다(필드별 재조립 시 새
             # 필드가 조용히 기본값으로 되돌아가는 문제를 방지).
             stt=base.stt.model_copy(
