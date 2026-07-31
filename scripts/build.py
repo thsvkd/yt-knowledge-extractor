@@ -68,6 +68,11 @@ _GPU_DEPS = ("nvidia-cublas-cu12",)
 # Visual Studio C++ 빌드 도구 워크로드 식별자.
 _VC_TOOLS_COMPONENT = "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
 
+# serious_python_windows 플러그인이 `%WINDIR%/System32` 에서 번들로 복사하는 VC 런타임.
+# 이 경로가 32비트로 오염되는 문제와 우회는 prepare_vcruntime_shim 참고.
+_VC_RUNTIME_DLLS = ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
+_PE_MACHINE_AMD64 = 0x8664
+
 # flet 이 생성하는 네이티브 앱은 시작할 때마다(Python 이 뜨기도 전에) 내부적으로
 # ``<문서 폴더>\flet\<패키지명>`` 을 만든다(``FLET_APP_STORAGE_DATA`` 용, 앱 코드가
 # 쓰지 않아도 항상 실행됨 — flet 자체의 동작이라 우리 쪽에서 끌 방법이 없다). 이 시점은
@@ -233,6 +238,98 @@ def ensure_macos_toolchain() -> None:
 
     xcode_version = xcodebuild.stdout.strip().splitlines()[0] if xcodebuild.stdout.strip() else "?"
     info(f"macOS 빌드 도구 확인됨: {xcode_version} ({developer_dir})")
+
+
+# -- VC 런타임(x64) 확보 -----------------------------------------------------
+def _pe_machine(path: Path) -> int:
+    """PE 헤더의 machine 값을 읽는다(0x8664=x64, 0x14C=x86)."""
+    with path.open("rb") as f:
+        f.seek(0x3C)
+        pe_offset = int.from_bytes(f.read(4), "little")
+        f.seek(pe_offset + 4)
+        return int.from_bytes(f.read(2), "little")
+
+
+def _vc_redist_x64_dir() -> Path:
+    """VS 설치에서 가장 최신인 x64 VC 런타임 재배포 폴더를 찾는다."""
+    vswhere = _vswhere_path()
+    result = subprocess.run(
+        [str(vswhere), "-products", "*", "-requires", _VC_TOOLS_COMPONENT,
+         "-property", "installationPath"],
+        capture_output=True, text=True,
+    )
+    paths = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if not paths:
+        fail("VC 빌드 도구가 설치된 Visual Studio 인스턴스를 찾지 못했습니다.")
+    redist_root = Path(paths[0]) / "VC" / "Redist" / "MSVC"
+    # 구조는 <버전>/x64/Microsoft.VC<툴셋>.CRT. 버전 폴더는 숫자로 비교한다
+    # (문자열 정렬은 14.9 를 14.10 보다 뒤로 놓아 최신을 잘못 고른다).
+    candidates = sorted(
+        redist_root.glob("*/x64/Microsoft.VC*.CRT"),
+        key=lambda p: [int(x) for x in p.parents[1].name.split(".") if x.isdigit()],
+    )
+    if not candidates:
+        fail(f"{redist_root} 에서 x64 VC 런타임 재배포 폴더를 찾지 못했습니다.")
+    return candidates[-1]
+
+
+def prepare_vcruntime_shim() -> Path:
+    """x64 VC 런타임만 담은 가짜 WINDIR 을 만들어 그 경로를 돌려준다.
+
+    serious_python_windows 플러그인은 번들에 넣을 VC 런타임을 ``$ENV{WINDIR}/System32``
+    에서 가져간다. 그런데 Flutter 가 INSTALL 단계를 실행하는 VS 번들 cmake.exe 는 32비트라
+    그 경로 접근이 WOW64 리다이렉션으로 SysWOW64(32비트 런타임)를 향한다. 그 결과 x64 앱
+    번들에 32비트 msvcp140/vcruntime140 이 들어가고(앱이 python312.dll 을 못 읽는다),
+    애초에 x64 전용인 vcruntime140_1.dll 은 SysWOW64 에 아예 없어 빌드가 INSTALL 단계에서
+    실패한다 — x86 재배포를 설치해도 그 파일은 생기지 않는다(x86 재배포에 없는 파일이다).
+
+    그래서 빌드 동안만 WINDIR 을 이 shim 으로 바꾼다. 리다이렉션 대상이 아닌 평범한
+    디렉터리라 32비트 cmake 도 x64 DLL 을 그대로 복사한다. 시스템 경로를 찾는 도구들이
+    쓰는 SystemRoot 는 건드리지 않으므로 빌드 도구 동작에는 영향이 없다.
+    """
+    redist = _vc_redist_x64_dir()
+    shim = REPO_ROOT / "build" / "_vcruntime_shim"
+    system32 = shim / "System32"
+    system32.mkdir(parents=True, exist_ok=True)
+    for name in _VC_RUNTIME_DLLS:
+        src = redist / name
+        if not src.exists():
+            fail(f"{src} 를 찾지 못했습니다(VS C++ 빌드 도구 설치를 확인하세요).")
+        shutil.copy2(src, system32 / name)
+    info(f"VC 런타임(x64) shim: {system32}  (원본: {redist})")
+    return shim
+
+
+def reset_cmake_cache_if_stale(shim: Path) -> None:
+    """생성된 CMake install 스크립트가 shim 을 가리키지 않으면 구성 캐시를 지운다.
+
+    ``$ENV{WINDIR}`` 은 CMake 구성 시점에만 읽히므로, 예전 WINDIR 로 구성해 둔 빌드 트리가
+    남아 있으면 환경 변수를 바꿔도 옛 경로가 그대로 쓰인다. 캐시만 지우면 CMake 가 다시
+    구성하고 컴파일 산출물은 재사용한다(빌드 트리를 통째로 지우는 것보다 훨씬 싸다).
+    """
+    build_dir = REPO_ROOT / "build" / "flutter" / "build" / "windows" / "x64"
+    install_script = build_dir / "cmake_install.cmake"
+    if not install_script.exists():
+        return
+    if str(shim).replace("\\", "/") in install_script.read_text(encoding="utf-8", errors="replace"):
+        return
+    cache = build_dir / "CMakeCache.txt"
+    if cache.exists():
+        cache.unlink()
+        info("CMake 구성 캐시 삭제(VC 런타임 경로 갱신 필요)")
+
+
+def verify_vc_runtime_arch(bundle_dir: Path) -> None:
+    """번들에 들어간 VC 런타임이 정말 x64 인지 확인한다(32비트면 앱이 뜨지 않는다)."""
+    wrong = [
+        f"{name}({'없음' if not (bundle_dir / name).exists() else '32비트'})"
+        for name in _VC_RUNTIME_DLLS
+        if not (bundle_dir / name).exists()
+        or _pe_machine(bundle_dir / name) != _PE_MACHINE_AMD64
+    ]
+    if wrong:
+        fail(f"번들의 VC 런타임이 x64 가 아닙니다: {', '.join(wrong)}")
+    info("번들 VC 런타임 x64 확인됨")
 
 
 # -- 결과물 정리/검증 --------------------------------------------------------
@@ -524,6 +621,12 @@ def main() -> int:
     # 모드로 강제해 회피한다(다른 OS 엔 무해).
     build_env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
 
+    if target == "windows":
+        # 번들에 x64 VC 런타임이 들어가도록 WINDIR 만 shim 으로 바꾼다(이유: prepare_vcruntime_shim).
+        shim = prepare_vcruntime_shim()
+        reset_cmake_cache_if_stale(shim)
+        build_env["WINDIR"] = str(shim)
+
     info("의존성 동기화 (uv sync)")
     check(["uv", "sync"])
 
@@ -554,6 +657,7 @@ def main() -> int:
     verify_artifact(dst, target)
     # 앱 exe 서명(YKE_SIGN_THUMBPRINT/YKE_SIGN_PFX 설정 시). 인증서 미지정이면 미서명.
     if target == "windows":
+        verify_vc_runtime_arch(dst)  # 서명·패키징 전에 잡아야 한다.
         maybe_sign_bundle(dst)
 
     # Velopack 설치기(Windows/macOS). linux 만 폴더 zip 으로 폴백.
