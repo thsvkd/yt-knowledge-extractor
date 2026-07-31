@@ -24,8 +24,8 @@ cpu_threads 를 물리 코어 수로 명시하면 위 배치 최적화 위에 �
 으로 오히려 느려진다(실측 확인). 물리 코어 수는 psutil 로 감지한다(cfg.cpu_threads=0
 일 때 자동 적용, _effective_cpu_threads 참고).
 
-이 모듈은 faster-whisper(AI) 전용이다. cfg.engine="vosk" 면 transcribe() 가 경량
-오프라인 엔진(stage3_stt_vosk, non-AI 옵션)으로 위임한다.
+이 모듈은 faster-whisper(AI) 전용이다. cfg.engine="sherpa" 면 transcribe() 가 경량
+오프라인 엔진(stage3_stt_sherpa)으로 위임한다.
 """
 
 from __future__ import annotations
@@ -242,7 +242,7 @@ def transcribe(
 ) -> list[Segment]:
     """오디오를 트랜스크립트로 변환한다.
 
-    cfg.engine="vosk" 면 경량 오프라인 엔진(non-AI 옵션)으로 위임한다(stage3_stt_vosk).
+    cfg.engine="sherpa" 면 경량 오프라인 엔진으로 위임한다(stage3_stt_sherpa).
     기본 엔진(faster-whisper)에서 model="auto" 는 장치별 기본 모델로 확정하고
     (GPU:large-v3 / CPU:small), GPU·CPU 모두 배치 추론으로 가속한다(cfg.batched).
     GPU 추론이 실패하면(cuBLAS 미설치 등) 조용히 넘어가지 않고 ``log`` 로 분명히 알린 뒤
@@ -252,10 +252,12 @@ def transcribe(
     ``should_stop`` 이 True 를 반환하면 세그먼트/배치 경계에서 :class:`StoppedError` 를
     던져 즉시 중단한다(영상 전체 STT 가 끝날 때까지 기다리지 않는다).
     """
-    if getattr(cfg, "engine", "faster-whisper") == "vosk":
-        from . import stage3_stt_vosk
+    # "vosk" 는 이 엔진의 예전 이름이다 — 예전 설정 파일/GUI 저장값이 그대로 남아 있어도
+    # 조용히 AI 엔진으로 되돌아가지 않도록 경량 엔진으로 받아 준다(sherpa-onnx 로 교체됨).
+    if getattr(cfg, "engine", "faster-whisper") in ("sherpa", "sherpa-onnx", "vosk"):
+        from . import stage3_stt_sherpa
 
-        return stage3_stt_vosk.transcribe(
+        return stage3_stt_sherpa.transcribe(
             audio_path, language, cfg, log=log, on_progress=on_progress, should_stop=should_stop
         )
 

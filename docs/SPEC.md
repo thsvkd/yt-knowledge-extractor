@@ -38,7 +38,7 @@ CLI·GUI 모두 동일한 코어(`yke.run.run_pipeline`)를 호출한다.
 | 0 | 영상/채널 선정 | 개별 영상 URL 또는 채널·재생목록 URL(→ 최근 N개 자동 확장) | `config/channel.yaml`, GUI, `stage1_ingest.expand_source` |
 | 1 | 오디오 + 메타데이터 | 말 중심이므로 **오디오만**(bestaudio). 포맷 변환 안 해 시스템 ffmpeg 불필요 | `yt-dlp`, `stage1_ingest` |
 | 2 | 자막 확인 | **수동(크리에이터) 자막을 최우선 신뢰**. 자동생성 자막은 그다음 소스. 타임스탬프 보존 | `stage2_subtitles` (VTT 파싱) |
-| 3 | STT | 우선순위 **① 수동 자막 > ② 유튜브 자동자막 > ③ 로컬 STT(faster-whisper/Vosk)** — 자원을 쓰는 마지막 수단 | `stage3_stt` (faster-whisper), `stage3_stt_vosk` (Vosk) |
+| 3 | STT | 우선순위 **① 수동 자막 > ② 유튜브 자동자막 > ③ 로컬 STT(faster-whisper/sherpa-onnx)** — 자원을 쓰는 마지막 수단 | `stage3_stt` (faster-whisper), `stage3_stt_sherpa` (sherpa-onnx) |
 | 4 | 텍스트 정제 | 규칙 기반 경량 정제(공백 정규화 등) | `stage4_clean` |
 | 5 | 지식 원자 단위 추출 | 서술형 요약이 아니라 **구조화 JSON**(§4) | `stage5_extract` (Claude) |
 | 6 | 영상 간 통합 | 개념 클러스터링 → 중복 제거 → 상충 플래깅 → 마크다운 | `stage6_integrate` (Claude) |

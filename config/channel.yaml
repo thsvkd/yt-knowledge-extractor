@@ -7,8 +7,8 @@ language: ko
 
 # 3단계 STT (로컬 베이스라인). 자막이 없거나 깨졌을 때만 이 경로를 탄다.
 stt:
-  engine: faster-whisper  # faster-whisper(AI, 기본, 정확도 높음) | vosk(경량 오프라인, non-AI —
-                         #   `uv sync --extra vosk` 필요, 완전 오프라인·초경량이지만 정확도는 뚜렷이 낮음)
+  engine: faster-whisper  # faster-whisper(AI, 기본, 정확도 높음) | sherpa(sherpa-onnx 경량 오프라인 —
+                         #   `uv sync --extra sherpa` 필요, 초경량·매우 빠르지만 정확도는 뚜렷이 낮음)
   model: auto            # auto | tiny | base | small | medium | large-v3  (engine: faster-whisper 전용)
                          #   auto: GPU면 large-v3(최고 품질), GPU 없으면 small 로 자동 선택
   device: auto           # auto | cuda | cpu  (engine: faster-whisper 전용)
@@ -18,7 +18,7 @@ stt:
   batched: true          # GPU 배치 추론(BatchedInferencePipeline)으로 가속. cuda 아니면 무시.
   batch_size: 16         # large 계열은 8GB VRAM 스래싱 방지를 위해 내부적으로 4 로 상한 적용됨
   cpu_threads: 0          # CPU 추론 스레드 수. 0 이면 물리 코어 수 자동 감지(psutil, 실측 ~10%↑)
-  vosk_model_size: small # small | large. 언어별로 large 가 없으면(예: 한국어) small 로 자동 대체(engine: vosk 전용)
+  sherpa_model_size: small # small | large. 언어별로 large 가 없으면(예: 한국어) small 로 자동 대체(engine: sherpa 전용)
 
 # 트랜스크립트 우선순위: ① 업로더 제공 수동 자막 > ② 유튜브 자동 생성 자막 > ③ 로컬
 # STT(AI 모델, CPU/GPU). 수동 자막을 1순위로 신뢰하고, 없거나 깨진 채로 제공된 경우

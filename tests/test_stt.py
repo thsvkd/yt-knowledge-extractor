@@ -131,13 +131,15 @@ class TestTranscribeBatchedGate(unittest.TestCase):
 
 
 class TestEngineDispatch(unittest.TestCase):
-    """cfg.engine="vosk" 면 stage3_stt_vosk 로 위임하고, faster-whisper 경로는 건드리지 않는지."""
+    """cfg.engine="sherpa" 면 stage3_stt_sherpa 로 위임하고, faster-whisper 경로는 안 건드리는지."""
 
-    def test_vosk_engine_delegates_to_vosk_module(self):
-        cfg = SimpleNamespace(engine="vosk", vosk_model_size="small")
-        with mock.patch("yke.pipeline.stage3_stt_vosk.transcribe", return_value=[]) as vosk_transcribe:
+    def test_sherpa_engine_delegates_to_sherpa_module(self):
+        cfg = SimpleNamespace(engine="sherpa", sherpa_model_size="small")
+        with mock.patch(
+            "yke.pipeline.stage3_stt_sherpa.transcribe", return_value=[]
+        ) as sherpa_transcribe:
             result = stage3_stt.transcribe(Path("audio.webm"), "ko", cfg, log=lambda m: None)
-        vosk_transcribe.assert_called_once()
+        sherpa_transcribe.assert_called_once()
         self.assertEqual(result, [])
 
     def test_missing_engine_field_defaults_to_faster_whisper(self):

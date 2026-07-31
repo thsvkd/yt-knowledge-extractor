@@ -25,7 +25,7 @@ class TestLoadConfig(unittest.TestCase):
         self.assertFalse(cfg.stt.word_timestamps)  # 세그먼트 시각만 쓰므로 기본 off
         self.assertTrue(cfg.stt.batched)  # 배치 추론 기본 on (GPU·CPU 모두)
         self.assertEqual(cfg.stt.cpu_threads, 0)  # 0 = 물리 코어 수 자동 감지
-        self.assertEqual(cfg.stt.vosk_model_size, "small")
+        self.assertEqual(cfg.stt.sherpa_model_size, "small")
         self.assertTrue(cfg.subtitles.use_manual)
         self.assertTrue(cfg.subtitles.use_auto_fallback)
         self.assertFalse(cfg.subtitles.stt_first)  # 수동 자막(업로더 제공) 우선이 기본
@@ -57,15 +57,21 @@ class TestLoadConfig(unittest.TestCase):
         self.assertEqual(cfg.stt.compute_type, "auto")  # 미지정 기본 유지
         self.assertEqual(cfg.stt.engine, "faster-whisper")  # 미지정 기본 유지
 
-    def test_vosk_engine_override(self):
+    def test_sherpa_engine_override(self):
         cfg = load_config(
             self._write(
-                "videos: []\nstt:\n  engine: vosk\n  vosk_model_size: large\n"
+                "videos: []\nstt:\n  engine: sherpa\n  sherpa_model_size: large\n"
             )
         )
-        self.assertEqual(cfg.stt.engine, "vosk")
-        self.assertEqual(cfg.stt.vosk_model_size, "large")
+        self.assertEqual(cfg.stt.engine, "sherpa")
+        self.assertEqual(cfg.stt.sherpa_model_size, "large")
         self.assertEqual(cfg.stt.model, "auto")  # 미지정 기본 유지(엔진과 무관)
+
+    def test_legacy_vosk_engine_value_still_loads(self):
+        # Vosk 는 sherpa-onnx 로 교체됐지만, 예전 설정 파일이 있어도 로딩은 깨지지 않아야
+        # 한다(엔진 위임은 stage3_stt 가 sherpa 로 받아 준다 — test_stt_sherpa 참고).
+        cfg = load_config(self._write("videos: []\nstt:\n  engine: vosk\n"))
+        self.assertEqual(cfg.stt.engine, "vosk")
 
 
 if __name__ == "__main__":
