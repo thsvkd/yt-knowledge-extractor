@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Windows 네이티브 러너(Flutter) 진입점 패치 — flet 빌드 템플릿을 고쳐서 쓴다.
+"""네이티브 러너(Windows/macOS, Flutter) 진입점 패치 — flet 빌드 템플릿을 고쳐서 쓴다.
 
 ``flet build`` 는 flet 이 배포하는 cookiecutter 템플릿으로 Flutter 앱 껍데기를 만든 뒤
 빌드한다. 그 껍데기의 Windows 진입점(``windows/runner/main.cpp``)에 아래 두 가지가
@@ -29,6 +29,20 @@
    그리는 오류 화면까지 숨은 창 안에 갇혀 "실행해도 아무 일이 없는" 상태가 된다. 창을
    처음부터 맞는 크기로 만드는 쪽은 그런 실패 모드가 없다.
 
+macOS 러너는 **2)번(첫 창 크기)만** 패치한다. 창 정의가 코드가 아니라
+``macos/Runner/Base.lproj/MainMenu.xib`` 에 있고(``contentRect`` 800x600 하드코딩),
+``MainFlutterWindow.awakeFromNib()`` 이 그 ``self.frame`` 을 그대로 다시 세팅하므로
+Windows 와 똑같이 "다른 크기로 떴다가 제자리를 찾는" 깜빡임이 난다.
+
+반면 1)번(Velopack 훅 조기 종료)은 macOS 에 **불필요**하다. ``--veloapp-*`` 인자는
+Velopack 의 Windows 설치 경로에서만 만들어지고(Rust/C# 의 fast-callback 훅도
+``#[cfg(target_os = "windows")]``), macOS 는 ``.pkg`` 의 postinstall 스크립트가
+``VELOPACK_FIRSTRUN=1 open <App.app>`` 로 **인자 없이** 앱을 띄운다. 단, flet 의
+"명령행 인자가 하나라도 있으면 개발자 모드" 분기 자체는 macOS 에도 살아 있으므로
+(Flutter macOS 임베더가 ``[NSProcessInfo arguments]`` 를 Dart ``main`` 에 넘긴다),
+나중에 ``open --args`` 나 딥링크·파일 연결로 앱을 띄우는 기능을 넣으면 같은 함정
+("켜지긴 하는데 아무것도 안 뜨는" 상태)을 macOS 에서 다시 만난다.
+
 앵커 문자열이 정확히 한 번 나오지 않으면(= flet 이 템플릿을 바꿨으면) 조용히 넘어가지
 않고 빌드를 실패시킨다. 패치가 사라진 채 배포되면 위 증상이 그대로 돌아오기 때문이다.
 """
@@ -52,13 +66,19 @@ _TEMPLATE_URL = "https://github.com/flet-dev/flet/releases/download/v{version}/f
 _TEMPLATE_ROOT = "build"
 # 템플릿 안에서 패치할 파일(경로에 cookiecutter 변수명이 그대로 들어간다).
 _RUNNER_MAIN = Path("{{cookiecutter.out_dir}}") / "windows" / "runner" / "main.cpp"
+# macOS 는 첫 창의 위치·크기를 코드가 아니라 이 xib(Interface Builder 문서)에서 읽는다.
+_RUNNER_XIB = Path("{{cookiecutter.out_dir}}") / "macos" / "Runner" / "Base.lproj" / "MainMenu.xib"
 
 # 패치 내용이 바뀌면 이 값을 올린다. 이 값은 **캐시 디렉터리 이름에 들어간다** — 그래야
 # 한다. flet build 는 템플릿의 내용이 아니라 경로/버전만 해시해 Flutter 프로젝트 재생성
 # 여부를 정하므로(build_base.create_flutter_project), 경로가 그대로면 패치를 고쳐도
 # build/flutter 를 재사용해 **옛 main.cpp 로 조용히 빌드된다**. 경로가 달라지면 flet 의
 # 해시도 달라져 반드시 다시 생성한다.
-_PATCH_REVISION = 1
+#
+# r2: macOS 러너(MainMenu.xib) 첫 창 크기 패치를 추가했다. 올리지 않으면 기존 캐시
+# ``build/_flet_template/<flet>-r1-<W>x<H>`` 와 그 ``.yke-patch`` 스탬프가 그대로 맞아
+# 재사용돼, macOS 패치가 조용히 빠진 채 빌드된다.
+_PATCH_REVISION = 2
 
 # -- 패치 정의 ---------------------------------------------------------------
 # 주석을 영어로 쓰는 이유: MSVC 는 BOM 없는 UTF-8 소스의 비ASCII 문자에 C4819 경고를 낸다.
@@ -81,6 +101,16 @@ _HOOK_PATCH = _HOOK_ANCHOR + """\
 
 _SIZE_ANCHOR = "  Win32Window::Size size(1280, 720);"
 _SIZE_PATCH = "  Win32Window::Size size({width}, {height});"
+
+# macOS 첫 창 크기. xib 는 창(contentRect)과 그 안의 컨텐트 뷰(frame)를 따로 적어 두고,
+# ``MainFlutterWindow.awakeFromNib()`` 이 ``self.frame`` 을 그대로 다시 세팅하므로 둘 다
+# 고쳐야 처음부터 앱 크기로 뜬다. 앵커에 ``key=`` 와 좌표까지 포함하는 이유: 이 파일에는
+# ``width="800" height="600"`` 이 두 번 나오고, 그것만으로 앵커를 잡으면 _replace_once 가
+# ValueError 로 빌드를 죽인다(실측 확인).
+_XIB_CONTENT_RECT_ANCHOR = '<rect key="contentRect" x="335" y="390" width="800" height="600"/>'
+_XIB_CONTENT_RECT_PATCH = '<rect key="contentRect" x="335" y="390" width="{width}" height="{height}"/>'
+_XIB_FRAME_ANCHOR = '<rect key="frame" x="0.0" y="0.0" width="800" height="600"/>'
+_XIB_FRAME_PATCH = '<rect key="frame" x="0.0" y="0.0" width="{width}" height="{height}"/>'
 
 # GUI 기본 창 크기의 SSOT. 파이썬 모듈을 import 하면 flet 까지 딸려 오므로 소스에서 읽는다.
 _GUI_PATH = REPO_ROOT / "src" / "yke" / "gui.py"
@@ -122,6 +152,29 @@ def patch_windows_runner(text: str, *, width: int, height: int) -> str:
     text = _replace_once(text, _HOOK_ANCHOR, _HOOK_PATCH, "Velopack 훅 조기 종료")
     text = _replace_once(
         text, _SIZE_ANCHOR, _SIZE_PATCH.format(width=width, height=height), "기본 창 크기"
+    )
+    return text
+
+
+def patch_macos_runner(text: str, *, width: int, height: int) -> str:
+    """macOS 러너 창 정의(``MainMenu.xib``)에 첫 창 크기 패치를 적용한 결과를 돌려준다.
+
+    Velopack 훅 패치는 하지 않는다 — macOS 설치는 인자 없이 앱을 띄운다(모듈 docstring 참고).
+
+    Raises:
+        ValueError: 기준 문자열이 정확히 한 번 나오지 않을 때(템플릿 구조 변경).
+    """
+    text = _replace_once(
+        text,
+        _XIB_CONTENT_RECT_ANCHOR,
+        _XIB_CONTENT_RECT_PATCH.format(width=width, height=height),
+        "macOS 첫 창 contentRect",
+    )
+    text = _replace_once(
+        text,
+        _XIB_FRAME_ANCHOR,
+        _XIB_FRAME_PATCH.format(width=width, height=height),
+        "macOS 첫 창 frame",
     )
     return text
 
@@ -173,17 +226,36 @@ def prepare(flet_version: str) -> Path:
     with zipfile.ZipFile(archive) as zf:
         zf.extractall(root)
 
+    # 캐시 트리는 OS 별로 나누지 않고 하나만 만든다(캐시 키가 단순해야 위 _PATCH_REVISION
+    # 스탬프 검사가 신뢰할 수 있다). 그래서 실행 중인 OS 와 무관하게 두 러너를 모두 패치한다 —
+    # 안 쓰는 쪽 패치는 그 OS 빌드에서 무시될 뿐이고, 대신 템플릿이 바뀌면 어느 OS 에서
+    # 빌드하든 즉시 드러난다.
+    #
+    # 의도된 트레이드오프이자 **감수하는 비용**: 이 때문에 macOS 템플릿(MainMenu.xib)만
+    # 바뀌어도 Windows 빌드가 멈춘다(그 반대도 같다). 한쪽 OS 에서만 조용히 패치가 빠진 채
+    # 배포되는 것보다, 양쪽 어디서 빌드하든 즉시 실패하는 편이 낫다고 보고 고른 쪽이다.
+    # 실패하면 아래 앵커를 새 flet 템플릿에 맞춰 고치고 _PATCH_REVISION 을 올린다.
     main_cpp = root / _TEMPLATE_ROOT / _RUNNER_MAIN
     if not main_cpp.is_file():
         fail(f"템플릿에서 Windows 러너 진입점을 찾지 못했습니다: {main_cpp}")
+    xib = root / _TEMPLATE_ROOT / _RUNNER_XIB
+    if not xib.is_file():
+        fail(f"템플릿에서 macOS 러너 창 정의를 찾지 못했습니다: {xib}")
     try:
-        patched = patch_windows_runner(
+        patched_main = patch_windows_runner(
             main_cpp.read_text(encoding="utf-8"), width=width, height=height
+        )
+        patched_xib = patch_macos_runner(
+            xib.read_text(encoding="utf-8"), width=width, height=height
         )
     except ValueError as exc:
         fail(str(exc))
-    main_cpp.write_text(patched, encoding="utf-8")
+    main_cpp.write_text(patched_main, encoding="utf-8")
+    xib.write_text(patched_xib, encoding="utf-8")
 
     stamp.write_text(key, encoding="utf-8")
-    info(f"Windows 러너 패치 완료(Velopack 훅 처리 + 첫 창 {width}x{height}): {template_dir}")
+    info(
+        f"Windows/macOS 러너 패치 완료(Velopack 훅 처리[Windows] + 첫 창 {width}x{height}): "
+        f"{template_dir}"
+    )
     return template_dir

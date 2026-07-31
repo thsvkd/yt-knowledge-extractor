@@ -1,9 +1,14 @@
 """Velopack 기반 설치/자동 업데이트 통합.
 
-Velopack(Squirrel 후속)이 설치와 자동 업데이트를 함께 담당한다. 설치본은
-``%LocalAppData%\\YtKnowledgeExtractor\\current\\`` 에 놓이고(경로 고정 — OneDrive 로
-리다이렉트된 "문서" 폴더 경합/제어된 폴더 액세스 이슈를 피한다), 업데이트는 GitHub
-Releases 의 ``releases.win.json`` + nupkg(델타 우선, 없으면 전체)로 받는다.
+Velopack(Squirrel 후속)이 설치와 자동 업데이트를 함께 담당한다. 설치 위치는 OS 마다 다르다.
+
+- Windows: ``%LocalAppData%\\YtKnowledgeExtractor\\current\\`` **고정**(OneDrive 로
+  리다이렉트된 "문서" 폴더 경합/제어된 폴더 액세스 이슈를 피한다).
+- macOS: 설치 시 사용자가 고른 ``/Applications`` 또는 ``~/Applications`` 아래의
+  ``YouTube Knowledge Extractor.app``(번들 이름은 ``vpk --packTitle`` 값이다).
+
+업데이트는 GitHub Releases 의 채널별 피드 — Windows 는 ``releases.win.json``, macOS 는
+``releases.osx.json`` — 와 nupkg(델타 우선, 없으면 전체)로 받는다.
 
 이 모듈은 velopack 바인딩(``velopack.pyd``, abi3)을 감싼 얇은 계층이다. velopack 이 없는
 개발 실행이나 설치 컨텍스트가 아닌 실행에서는 모든 함수가 안전하게 no-op / False 로
@@ -11,7 +16,9 @@ Releases 의 ``releases.win.json`` + nupkg(델타 우선, 없으면 전체)로 �
 
 설치/업데이트/제거 라이프사이클 훅(``--veloapp-*``)은 이 모듈이 다루지 않는다. flet 이
 만드는 Flutter 러너가 명령행 인자를 "개발자 모드"로 해석해 파이썬을 실행조차 하지 않기
-때문에, 훅은 네이티브 진입점에서 처리한다(``scripts/flet_template.py`` 참고).
+때문에, 훅은 네이티브 진입점에서 처리한다(``scripts/flet_template.py`` 참고). 이는
+**Windows 한정**이다 — macOS 는 애초에 훅 인자를 넘기지 않고, ``.pkg`` 의 postinstall
+스크립트가 ``VELOPACK_FIRSTRUN=1`` 환경변수를 세운 채 인자 없이 앱을 띄운다.
 
 - :func:`run_startup_maintenance` — 오래된 패키지 정리 등 설치본 유지보수. 무거우므로
   창이 뜬 뒤 워커 스레드에서 부른다(GUI 의 업데이트 확인 스레드가 먼저 호출).
@@ -27,7 +34,8 @@ from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
-# GitHub Releases 소스. 릴리스 에셋에 releases.win.json + *.nupkg 가 올라가 있어야 한다.
+# GitHub Releases 소스. 릴리스 에셋에 그 OS 채널의 피드(releases.win.json /
+# releases.osx.json) + *.nupkg 가 올라가 있어야 한다(파일명 완전 일치로만 찾는다).
 REPO_URL = "https://github.com/thsvkd/yt-knowledge-extractor"
 
 
@@ -71,6 +79,9 @@ def _manager():
     if _manager_cache is None:
         from velopack import GithubSource, UpdateManager
 
+        # 채널(win/osx)을 여기서 넘기지 않는 것은 의도된 것이다. 채널은 패키징 시점
+        # (``vpk pack --channel``)에 nuspec 에 박혀 설치본이 스스로 안다. ``ExplicitChannel``
+        # 을 여기서 넘기면 오히려 win 설치본이 osx 피드를 보는 식의 채널 전환 버그를 만든다.
         _manager_cache = UpdateManager(GithubSource(REPO_URL))
     return _manager_cache
 
@@ -130,7 +141,12 @@ def download(info, progress_cb: Callable[[float], None] | None = None) -> None:
 
 
 def apply_and_restart(info) -> None:
-    """받아둔 업데이트로 ``current\\`` 를 교체하고 앱을 재시작한다 — 이 호출로 프로세스가
+    """받아둔 업데이트로 설치본을 교체하고 앱을 재시작한다 — 이 호출로 프로세스가
     종료된다. :func:`download` 를 먼저 마친 뒤 호출하며, 호출 전 사용자 안내를 끝내야 한다.
+
+    교체 방식은 OS 마다 다르다. Windows 는 ``current\\`` 폴더를 통째로 갈아 끼우고,
+    macOS 는 ``.app`` 번들 전체를 ``renamex_np`` 로 **원자 교체**한다. 그래서 macOS 에서
+    ``/Applications`` (모든 사용자 공용)에 설치했다면 교체 시점에 관리자 인증 팝업이 뜰 수
+    있다 — 이 팝업을 피하려면 설치할 때 ``~/Applications`` 를 고르면 된다.
     """
     _manager().apply_updates_and_restart(info)

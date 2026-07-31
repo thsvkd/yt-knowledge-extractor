@@ -16,6 +16,10 @@ self-signed 인증서로도, 정식 CA 인증서로도 동작한다. 서명 자�
   YKE_SIGN_PFX_PASSWORD  .pfx 비밀번호(있으면).
   YKE_SIGN_TIMESTAMP_URL RFC3161 타임스탬프 서버(기본 digicert). 인증서 만료 후에도 서명 유지.
 
+이 모듈은 **Windows 전용**이다. macOS 코드 서명/공증(codesign/notarytool)은 이번 범위
+밖이라 macOS 빌드는 미서명으로 배포하고, 사용자에게는 README 의 Gatekeeper 우회 안내로
+대응한다. 그래서 아래 진입점들은 Windows 가 아니면 아무것도 하지 않는다.
+
 사용:
   python scripts/sign.py <배포폴더|exe경로>   # 직접 서명(build.py 없이 재서명할 때)
   build.py 가 빌드 직후 자동 호출(maybe_sign_bundle).
@@ -31,6 +35,8 @@ from pathlib import Path
 from _common import REPO_ROOT, fail, info
 
 # 서명 대상(번들 루트의 앱 실행 파일). 게시자 표시·실행 신뢰는 이 exe 의 서명을 본다.
+# **Windows 전용 경로**다 — macOS 번들은 .app 디렉터리라 이 이름으로 찾지 않으며,
+# 애초에 macOS 서명은 이번 범위 밖이다(모듈 docstring 참고).
 _APP_EXE = "yt-knowledge-extractor.exe"
 _DEFAULT_TIMESTAMP = "http://timestamp.digicert.com"
 
@@ -70,6 +76,10 @@ def velopack_sign_params() -> str | None:
     미지정(YKE_SIGN_THUMBPRINT/PFX 없음)이면 None(=미서명). 비밀번호(/p)가 들어갈 수 있으니
     호출 측은 이 문자열을 로그에 남기지 않는다.
     """
+    # signtool 은 Windows 전용이다. 개발자 환경에 YKE_SIGN_THUMBPRINT 가 남아 있으면
+    # macOS 빌드가 velopack_pack 안에서 signtool 을 못 찾아 죽는다(실제로 걸리는 함정).
+    if sys.platform != "win32":
+        return None
     cert_args = _sign_args()
     if cert_args is None:
         return None
@@ -103,6 +113,13 @@ def maybe_sign_bundle(dst: Path) -> bool:
     Returns:
         서명했으면 True, 인증서 미지정으로 건너뛰면 False.
     """
+    # signtool 은 Windows 전용이다. 개발자 환경에 YKE_SIGN_THUMBPRINT 가 남아 있으면
+    # macOS 빌드가 signtool 을 못 찾아 죽는다(실제로 걸리는 함정). macOS 서명은 범위 밖.
+    # 조용히 False 를 돌려주면 "서명됐다"고 오해한 채 배포하게 되므로 이유를 반드시 남긴다.
+    if sys.platform != "win32":
+        info(f"코드 서명 건너뜀 ({sys.platform} — 이 스크립트는 Windows 전용입니다. "
+             "macOS 는 미서명 배포이며 README 의 Gatekeeper 우회 안내로 대응합니다).")
+        return False
     cert_args = _sign_args()
     if cert_args is None:
         info("코드 서명 건너뜀 (YKE_SIGN_THUMBPRINT/YKE_SIGN_PFX 미설정 → 미서명 배포).")
@@ -119,6 +136,13 @@ def maybe_sign_bundle(dst: Path) -> bool:
 
 
 def _main(argv: list[str]) -> int:
+    # 직접 실행 경로는 여기서 끊는다. 예전에는 디렉터리 인자일 때만 maybe_sign_bundle 이
+    # 조용히 False 를 돌려주고 _main 이 그대로 0 을 반환해, macOS 에서 "출력 0줄 + 종료 0"
+    # 이라는 성공처럼 보이는 무동작이 됐다(서명됐다고 믿고 배포하게 된다).
+    if sys.platform != "win32":
+        fail(f"이 스크립트는 Windows 전용입니다(현재 {sys.platform}). "
+             "macOS 코드 서명/공증은 이번 범위 밖이며, 미서명 배포 + README 의 "
+             "Gatekeeper 우회 안내로 대응합니다.")
     if len(argv) != 1:
         fail("사용법: python scripts/sign.py <배포폴더|exe경로>")
     target = Path(argv[0]).resolve()

@@ -1,6 +1,6 @@
 # 릴리스 노트 작성 지침
 
-너는 "YouTube Knowledge Extractor"(유튜브 영상을 개념 단위 지식베이스로 정리하는 Windows
+너는 "YouTube Knowledge Extractor"(유튜브 영상을 개념 단위 지식베이스로 정리하는 Windows·macOS
 데스크톱 앱)의 GitHub 릴리스 노트 **본문**을 쓴다. 입력으로 이전 릴리스 태그, 이번 태그,
 그 사이의 git 커밋 로그(제목 + 본문)를 받는다.
 
@@ -26,15 +26,23 @@
 - 사용자 체감 변경이 거의 없는 릴리스(내부 정리 위주)라면 억지로 부풀리지 말고 있는 그대로
   짧게 쓴다(예: "이번 릴리스는 내부 개선 위주입니다").
 - 과장된 홍보 문구나 이모지 남발은 하지 않는다.
+- **하나의 릴리스 노트가 Windows·macOS 두 플랫폼의 에셋을 모두 설명해야 한다.** 배포는 OS별로
+  두 번 나눠 실행되지만(각 OS 로컬 빌드), 릴리스 노트는 **첫 번째 실행에서 한 번만 생성**되고
+  두 번째 OS 배포 때는 에셋만 추가된다(노트를 다시 만들지 않는다). 따라서 설치기 이름을 언급할
+  때는 `-win-Setup.exe` 와 `-osx-Setup.pkg` 를 함께 적는다.
+- 플랫폼 한정 변경은 그 사실을 밝힌다(예: "GPU 가속(Windows 전용)", "macOS 첫 실행 시
+  Gatekeeper 우회 필요").
 
 **참고할 기존 릴리스 노트(v0.1.2, 목표 톤)**
 
 > Velopack 기반 설치·자동 업데이트로 전환한 첫 릴리스입니다.
 >
-> - **원클릭 설치기**(`YtKnowledgeExtractor-win-Setup.exe`) — `%LocalAppData%`에 설치되고
->   바탕화면·시작 메뉴 바로가기를 만듭니다(관리자 권한 불필요).
+> - **원클릭 설치기** — Windows `YtKnowledgeExtractor-win-Setup.exe`(`%LocalAppData%`에 설치되고
+>   바탕화면·시작 메뉴 바로가기를 만듭니다, 관리자 권한 불필요) / macOS
+>   `YtKnowledgeExtractor-osx-Setup.pkg`(응용 프로그램 폴더에 설치됩니다. 미서명 배포라 첫 실행 시
+>   Gatekeeper 우회가 필요합니다 — [설치 안내](https://github.com/thsvkd/yt-knowledge-extractor#macos)).
 > - **앱 내 자동 업데이트** — 이후 새 버전은 바뀐 부분만 받아 자동 갱신됩니다(델타).
-> - **NVIDIA GPU 가속은 온디맨드** — 설치 후 앱의 **고급 옵션 → GPU 가속 다운로드**에서
+> - **NVIDIA GPU 가속은 온디맨드**(Windows 전용) — 설치 후 앱의 **고급 옵션 → GPU 가속 다운로드**에서
 >   cuBLAS 런타임(~600MB)을 한 번만 받아 켭니다.
 >
 > 기존 v0.1.1(zip) 사용자는 위 Setup.exe로 한 번 설치하면 이후 자동 업데이트됩니다.

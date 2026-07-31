@@ -24,6 +24,7 @@ from pathlib import Path
 import flet as ft
 
 from . import __version__, gpu_runtime, velopack_update
+from .appdirs import user_data_dir
 from .config import Config, LLMConfig, load_config
 from .llm.claude_client import is_available as _claude_cli_available
 from .llm.credentials import has_gemini_api_key, set_gemini_api_key
@@ -65,8 +66,17 @@ _STT_MODELS = ("auto", "tiny", "base", "small", "medium", "large-v3")
 _STT_ENGINES = [("AI 모델 (faster-whisper)", "faster-whisper"), ("경량 모델 (sherpa-onnx)", "sherpa")]
 # 예전 GUI 설정에 저장돼 있을 수 있는 엔진 값 → 현재 값. Vosk 는 sherpa-onnx 로 교체됐다.
 _STT_ENGINE_ALIASES = {"vosk": "sherpa", "sherpa-onnx": "sherpa"}
-# GPU 가속 선택지: (표시명, stt.device 값).
-_DEVICE_CHOICES = [("자동", "auto"), ("사용", "cuda"), ("사용 안함", "cpu")]
+# GPU 가속(cuBLAS 온디맨드 런타임)을 지원하는 플랫폼인지. cuBLAS 온디맨드 런타임은
+# Windows용 DLL 이다. macOS 에는 해당 없는 기능이라 UI 를 아예 감춘다(선택지로 남겨 두면
+# 사용자가 고를 수 있는데 실제로는 아무 효과가 없어 '켰는데 왜 안 빨라지냐'는 오해를 만든다).
+_GPU_SUPPORTED = sys.platform.startswith("win")
+# GPU 가속 선택지: (표시명, stt.device 값). NVIDIA cuBLAS 를 못 쓰는 플랫폼에서는
+# "사용"(cuda)을 아예 빼서, 고르면 반드시 실패하는 선택지가 남지 않게 한다.
+_DEVICE_CHOICES = (
+    [("자동", "auto"), ("사용", "cuda"), ("사용 안함", "cpu")]
+    if _GPU_SUPPORTED
+    else [("자동", "auto"), ("사용 안함", "cpu")]
+)
 # 실행 단계 선택지: (표시명, run_pipeline stage 값). 기본값은 '스크립트 추출까지'.
 _STAGE_CHOICES = [
     ("전체 (지식 문서화까지)", "all"),
@@ -174,15 +184,14 @@ def _load_base_config(path: str) -> Config:
 
 # GUI 에서 사용자가 바꾼 값(저장 폴더 등)을 재시작 후에도 기억하기 위한 영속 위치.
 # config/channel.yaml 은 저장소에 커밋되는 템플릿이라 머신별 경로를 담기에 적절치
-# 않으므로, gpu_runtime.runtime_dir() 과 같은 규칙(%LocalAppData%\...)을 따로 쓴다 —
-# Velopack 업데이트가 current\ 를 통째로 교체해도 이 경로는 유지된다.
+# 않으므로, gpu_runtime.runtime_dir() 과 같은 규칙(appdirs.user_data_dir)을 따로 쓴다 —
+# Velopack 업데이트가 설치 폴더(current)를 통째로 교체해도 이 경로는 유지된다.
 _GUI_SETTINGS_APP_ID = "YtKnowledgeExtractor"
 _GUI_SETTINGS_FILE = "gui_settings.json"
 
 
 def _gui_settings_path() -> Path:
-    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    return Path(base) / _GUI_SETTINGS_APP_ID / _GUI_SETTINGS_FILE
+    return user_data_dir(_GUI_SETTINGS_APP_ID) / _GUI_SETTINGS_FILE
 
 
 def _load_gui_settings() -> dict:
@@ -204,8 +213,10 @@ def _save_gui_settings(settings: dict) -> None:
 def _default_output_dir() -> str:
     """저장 폴더 기본값(사용자가 아직 바꾸지 않았을 때) — 바탕화면.
 
-    OneDrive 가 바탕화면을 리다이렉트했으면(흔한 Windows 설정) 그 경로를 우선하고,
-    아니면 홈 아래 Desktop 을 쓴다.
+    OneDrive 가 바탕화면을 리다이렉트했으면 그 경로를 우선하고, 아니면 홈 아래 Desktop
+    을 쓴다. OneDrive 리다이렉트는 **Windows 한정** 사정이며(그 환경변수는 다른 OS 에
+    존재하지 않는다), macOS/Linux 에서는 조건이 자연히 거짓이 되어 ``~/Desktop`` 으로
+    떨어진다 — 그래서 플랫폼 분기 없이 한 경로로 둔다.
     """
     onedrive = os.environ.get("OneDrive") or os.environ.get("OneDriveConsumer")
     if onedrive:
@@ -379,9 +390,15 @@ class PipelineGUI:
             label="스크립트 변환 모델",
             value=cfg.stt.model if cfg.stt.model in _STT_MODELS else "auto",
             width=180,
-            tooltip="auto: GPU면 large-v3(최고 품질), GPU 없으면 small 로 자동 선택 (AI 모델 엔진 전용)",
+            tooltip=(
+                "auto: NVIDIA GPU 가속이 가능하면 large-v3(최고 품질), 아니면 small 로 "
+                "자동 선택 (AI 모델 엔진 전용)"
+            ),
             options=[ft.dropdown.Option(x) for x in _STT_MODELS],
         )
+        # 선택지에 없는 값은 "auto" 로 떨어뜨린다 — macOS 에서 예전에(또는 Windows 에서
+        # 만든 설정 파일을 옮겨 와) 저장한 `cuda` 가 드롭다운에 없는 값으로 남으면
+        # 드롭다운이 빈 채로 뜨므로, 이 검증이 곧 플랫폼 간 설정 이식 방어선이다.
         _device_vals = {v for _l, v in _DEVICE_CHOICES}
         self.stt_device_dd = ft.Dropdown(
             label="GPU 가속",
@@ -488,12 +505,22 @@ class PipelineGUI:
         # 돌린다. CPU 설치본은 cuBLAS 를 포함하지 않으므로 이 버튼으로 필요할 때만 받는다.
         # 상태/버튼은 시작 시 백그라운드에서 채운다(ctranslate2 로드가 무거워 메인 스레드
         # 기동을 늦추지 않도록). 다운로드 전에는 버튼이, 이미 있으면 상태만 보인다.
+        # (macOS/Linux 에서는 _GPU_SUPPORTED=False 라 이 줄 전체가 숨겨진다. 위젯 자체는
+        #  그대로 만든다 — _refresh_gpu_status 같은 백그라운드 코드가 이 참조를 만지므로
+        #  생성을 건너뛰면 AttributeError 로 죽는다.)
         self.gpu_status = ft.Text("GPU 가속: 확인 중…", size=12, color=_muted_color)
         self.gpu_btn = ft.Button(
             "GPU 가속 다운로드",
             icon=ft.Icons.BOLT,
             visible=False,
             on_click=lambda _e: self._on_gpu_download(),
+        )
+        self.gpu_row = ft.Row(
+            [self.gpu_btn, self.gpu_status],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=12,
+            wrap=True,
+            visible=_GPU_SUPPORTED,
         )
 
         advanced = ft.ExpansionTile(
@@ -521,12 +548,7 @@ class PipelineGUI:
                             self.cred_status,
                             self.force_cb,
                             self.force_local_stt_cb,
-                            ft.Row(
-                                [self.gpu_btn, self.gpu_status],
-                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                spacing=12,
-                                wrap=True,
-                            ),
+                            self.gpu_row,
                             ft.Divider(),
                             ft.Row(
                                 [self.update_btn, self.update_status],
@@ -1137,7 +1159,11 @@ class PipelineGUI:
         """NVIDIA GPU 유무·cuBLAS 설치 여부로 GPU 가속 상태/버튼을 갱신한다(백그라운드).
 
         ctranslate2 로드가 무거워 시작 스레드를 늦추지 않도록 워커에서 호출한다.
+        GPU 가속을 지원하지 않는 플랫폼(macOS/Linux)에서는 UI 가 숨겨져 있으므로 확인
+        자체를 건너뛴다 — 위젯은 존재하지만 값을 채우지 않는다.
         """
+        if not _GPU_SUPPORTED:
+            return
         try:
             has_gpu = gpu_runtime.cuda_available()
             ready = gpu_runtime.cublas_present()

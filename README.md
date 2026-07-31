@@ -16,8 +16,8 @@
 - **개념 단위 통합** — 영상별 요약을 나열하는 대신, 같은 개념을 여러 영상에서 모아 통합합니다.
 - **검증 가능성** — 모든 항목에 타임스탬프와 원문 인용이 포함되어 원본과 대조할 수 있습니다.
 - **사실/의견 구분** — 각 항목을 사실·의견·팁·정의로 분류합니다.
-- **자막 부재 시 STT 대체** — 수동·자동 자막이 모두 없거나 깨졌을 때만 로컬 음성인식(faster-whisper, 또는 완전 오프라인 경량 엔진 Vosk)으로 전사합니다.
-- **원클릭 설치** — 설치기(Setup.exe) 하나로 관리자 권한 없이 설치됩니다. NVIDIA GPU 가속은 별도 버전이 아니라 앱에서 필요할 때 켭니다(전체 지식 위키 생성에는 [Claude Code CLI](https://claude.com/claude-code) 설치가 필요합니다).
+- **자막 부재 시 STT 대체** — 수동·자동 자막이 모두 없거나 깨졌을 때만 로컬 음성인식(faster-whisper, 또는 완전 오프라인 경량 엔진 sherpa-onnx)으로 전사합니다.
+- **원클릭 설치** — 설치기 하나(Windows `Setup.exe` / macOS `Setup.pkg`)로 설치됩니다(Windows는 관리자 권한 불필요). NVIDIA GPU 가속은 별도 버전이 아니라 앱에서 필요할 때 켭니다(Windows 전용, 전체 지식 위키 생성에는 [Claude Code CLI](https://claude.com/claude-code) 설치가 필요합니다).
 - **자동 업데이트** — 새 버전은 앱 내에서 바뀐 부분만 받아 자동 갱신됩니다.
 
 ---
@@ -25,23 +25,27 @@
 ## 시작하기
 
 > [!NOTE]
-> 현재 **Windows** 실행 파일을 제공합니다. macOS·Linux는 아래 [개발 환경](#개발-환경)의
-> 소스 빌드를 참고하십시오.
+> 현재 **Windows**·**macOS(Apple Silicon)** 설치 파일을 제공합니다. Intel Mac과 Linux는
+> 아래 [개발 환경](#개발-환경)의 소스 빌드를 참고하십시오.
 
 ### 1. 다운로드
 
-[최신 릴리스](https://github.com/thsvkd/yt-knowledge-extractor/releases/latest)에서 설치기 하나를 받습니다.
+[최신 릴리스](https://github.com/thsvkd/yt-knowledge-extractor/releases/latest)에서 본인 OS의 설치기 하나를 받습니다.
 
 | 파일 | 대상 | 크기 |
 | --- | --- | --- |
 | **`YtKnowledgeExtractor-win-Setup.exe`** | 모든 Windows 사용자. 설치 후 자동 업데이트됩니다. | ~160 MB |
+| **`YtKnowledgeExtractor-osx-Setup.pkg`** | macOS 사용자 — **Apple Silicon(M1 이상) 전용**. 설치 후 자동 업데이트됩니다. | — |
 
 > [!TIP]
 > **NVIDIA GPU 가속**은 별도 버전이 아니라, 설치 후 앱의 **고급 옵션 → GPU 가속 다운로드**에서
 > 켭니다(그때 cuBLAS 런타임 ~900MB를 한 번만 받습니다). GPU 가속은 음성인식 **속도**만 다를 뿐
 > 결과물 품질은 동일하며, NVIDIA GPU가 없으면 자동으로 CPU로 동작합니다.
+> **Windows 전용 기능**이라 macOS 앱에는 이 항목이 표시되지 않습니다(macOS는 CPU로 동작).
 
 ### 2. 설치
+
+#### Windows
 
 1. 받은 `YtKnowledgeExtractor-win-Setup.exe`를 실행합니다. 사용자 폴더(`%LocalAppData%`)에
    설치되고 바탕화면·시작 메뉴 바로가기가 생성됩니다(관리자 권한 불필요). 설치가 끝나면
@@ -52,6 +56,49 @@
 >   CA가 아닌 개인(self-signed) 서명이라 나타나는 정상 경고이며, 이후 자동 업데이트에는 뜨지 않습니다.
 > - 드물게 `PathNotFoundException` 오류로 앱이 뜨지 않으면 Windows 보안의 **제어된 폴더
 >   액세스** 때문일 수 있습니다. 아래 [자주 묻는 질문](#자주-묻는-질문)을 참고하십시오.
+
+#### macOS
+
+> [!IMPORTANT]
+> macOS 배포본은 현재 **Apple 개발자 서명·공증(notarization)을 하지 않은 미서명 빌드**입니다.
+> 그래서 **처음 열 때 macOS가 반드시 한 번 막습니다**. 아래 우회 절차를 순서대로 시도하십시오
+> (이는 최초 설치 1회에만 필요하며, 이후 앱 내 자동 업데이트에는 나타나지 않습니다).
+
+1. 받은 `YtKnowledgeExtractor-osx-Setup.pkg`를 더블클릭합니다. 설치 위치로 **`/Applications`
+   (응용 프로그램)** 또는 **`~/Applications`(사용자 전용)** 을 고를 수 있습니다. 설치가 끝나면
+   앱이 자동으로 실행됩니다.
+   - 설치되는 앱 이름은 **`YouTube Knowledge Extractor.app`** 입니다.
+   - `/Applications`에 설치하면 이후 자동 업데이트가 앱 번들을 교체할 때 **관리자 인증
+     팝업**이 뜰 수 있습니다. 이 팝업을 원하지 않으면 `~/Applications`를 고르십시오.
+
+**Gatekeeper(“확인되지 않은 개발자”) 우회 — 위에서부터 순서대로**
+
+1. `.pkg` 파일을 **Control-클릭(우클릭) → 열기** 한 뒤, 나타나는 대화상자에서 **"열기"** 를
+   누릅니다. (Finder에서 그냥 더블클릭하면 "열기" 버튼 없이 차단만 됩니다.)
+2. 그래도 막히면 **시스템 설정 → 개인정보 보호 및 보안** 을 열고, 화면 아래쪽의
+   *"…이(가) 차단되었습니다"* 문구 옆 **"그래도 열기"** 를 누른 뒤 다시 실행합니다.
+   - **macOS 15 (Sequoia) 이상**에서는 **앱**에 대한 Control-클릭 우회가 제거되어 이 경로만
+     남습니다. 즉 1단계가 통하지 않으면 반드시 여기서 허용해야 합니다.
+3. *"…열 수 없습니다. 손상되었기 때문입니다"* 라는 메시지가 뜨면, 다운로드 격리(quarantine)
+   속성을 제거한 뒤 다시 엽니다.
+
+   ```bash
+   xattr -dr com.apple.quarantine ~/Downloads/YtKnowledgeExtractor-osx-Setup.pkg
+   ```
+
+   설치 후 **앱**에서 같은 증상이 나타나면 앱 번들에 대해 같은 명령을 실행합니다.
+
+   ```bash
+   xattr -dr com.apple.quarantine "/Applications/YouTube Knowledge Extractor.app"
+   # 설치 위치로 ~/Applications 를 골랐다면:
+   xattr -dr com.apple.quarantine "$HOME/Applications/YouTube Knowledge Extractor.app"
+   ```
+
+> [!NOTE]
+> 설치되는 번들 이름 `YouTube Knowledge Extractor.app`은 빌드 시 `vpk --packTitle` 값에서
+> 옵니다 — Velopack이 패키징하면서 flet이 만든 `yt-knowledge-extractor.app`을 이 이름으로
+> 바꿔 담습니다. 앱을 어디에 설치했는지 확실하지 않으면 Finder의 **응용 프로그램** 폴더에서
+> 이 이름을 찾으십시오.
 
 ### 3. Claude Code CLI 준비 (선택)
 
@@ -96,7 +143,7 @@ CLI 없이 전사 단계만 먼저 실행해 결과를 확인한 뒤, 전체 위
 | 0 | 영상/채널 선정 (채널·재생목록은 최근 N개 자동 확장) |
 | 1 | 오디오 + 메타데이터 다운로드 (`yt-dlp`, 오디오만 다운로드) |
 | 2 | 자막 확인 — **수동(크리에이터) 자막** 우선, 없으면 **유튜브 자동 생성 자막** |
-| 3 | 자막이 없거나 깨졌을 때만 **음성인식(STT)** — 로컬 `faster-whisper`(기본) 또는 경량 오프라인 `Vosk` |
+| 3 | 자막이 없거나 깨졌을 때만 **음성인식(STT)** — 로컬 `faster-whisper`(기본) 또는 경량 오프라인 `sherpa-onnx` |
 | 4 | 텍스트 정제 |
 | 5 | 영상별 **지식 원자 단위** 추출 — Claude (구조화 JSON) |
 | 6 | 영상 간 **통합** → `wiki.md` — Claude (클러스터링·중복제거·상충 표기) |
@@ -147,6 +194,9 @@ CLI 없이 전사 단계만 먼저 실행해 결과를 확인한 뒤, 전체 위
 결과물 품질은 동일합니다. 차이는 음성인식 **속도**뿐입니다. NVIDIA GPU가 있으면 GPU
 버전이 전사를 더 빠르게 처리합니다. GPU가 없으면 CPU 버전을 사용하십시오.
 
+**GPU 가속은 NVIDIA GPU + Windows 에서만 제공됩니다.** macOS는 CPU로 동작하며, 앱에
+GPU 관련 UI(고급 옵션의 "GPU 가속" 항목)가 아예 표시되지 않습니다.
+
 </details>
 
 <details>
@@ -167,6 +217,33 @@ CLI 없이 전사 단계만 먼저 실행해 결과를 확인한 뒤, 전체 위
 </details>
 
 <details>
+<summary><b>macOS가 앱을 차단합니다 / "손상되었기 때문에 열 수 없습니다".</b></summary>
+
+<br>
+
+macOS 배포본은 **Apple 개발자 서명·공증(notarization)을 하지 않은** 빌드입니다. 그래서
+브라우저로 내려받은 파일에 붙는 **격리(quarantine) 속성**을 Gatekeeper가 확인하고 실행을
+막습니다(파일이 실제로 깨진 것이 아닙니다 — "손상되었습니다"라는 문구도 서명 검증 실패를
+가리키는 macOS의 표현입니다). 다음을 위에서부터 순서대로 시도하십시오.
+
+1. `.pkg` 파일을 **Control-클릭(우클릭) → 열기** 후 대화상자에서 **"열기"**.
+2. 그래도 막히면 **시스템 설정 → 개인정보 보호 및 보안** 아래쪽의 *"…이(가) 차단되었습니다"*
+   옆 **"그래도 열기"**. macOS 15(Sequoia) 이상은 앱의 Control-클릭 우회가 제거되어 이 경로만
+   남습니다.
+3. 그래도 "손상되었기 때문에 열 수 없습니다"가 뜨면 터미널에서 격리 속성을 제거합니다.
+
+   ```bash
+   xattr -dr com.apple.quarantine ~/Downloads/YtKnowledgeExtractor-osx-Setup.pkg
+   # 설치 후 앱에서 같은 증상이면(설치 위치로 ~/Applications 를 골랐다면 그쪽 경로로):
+   xattr -dr com.apple.quarantine "/Applications/YouTube Knowledge Extractor.app"
+   ```
+
+> 이 절차는 **최초 1회 설치에만** 필요합니다. 이후 앱 내 자동 업데이트로 받는 새 버전에는
+> 격리 속성이 붙지 않습니다(프로그램이 직접 내려받기 때문).
+
+</details>
+
+<details>
 <summary><b>Claude Code CLI가 반드시 필요합니까? 비용이 발생합니까?</b></summary>
 
 <br>
@@ -178,11 +255,11 @@ Anthropic에 과금됩니다.
 </details>
 
 <details>
-<summary><b>실행하면 <code>PathNotFoundException</code>(문서 폴더 관련) 오류가 나며 앱이 뜨지 않습니다.</b></summary>
+<summary><b>(Windows 한정) 실행하면 <code>PathNotFoundException</code>(문서 폴더 관련) 오류가 나며 앱이 뜨지 않습니다.</b></summary>
 
 <br>
 
-Windows 보안의 **제어된 폴더 액세스**(랜섬웨어 방지 기능)가 서명되지 않은 이 앱이 "문서"
+이 항목은 **Windows 한정**입니다. Windows 보안의 **제어된 폴더 액세스**(랜섬웨어 방지 기능)가 서명되지 않은 이 앱이 "문서"
 폴더에 쓰는 것을 차단해서 생기는 오류입니다("허용되지 않은 변경이 차단됨" 알림이 함께 뜨는
 경우 이 원인일 가능성이 높습니다). 다음 중 하나로 해결할 수 있습니다.
 
@@ -275,16 +352,27 @@ uv run yke --limit 5              # 채널/재생목록에서 최근 5개만
 
 **빌드 (네이티브 데스크톱 앱 + 설치기)**
 
-실행 OS를 감지해 flet 네이티브 앱을 빌드하고, Windows에서는 [Velopack](https://velopack.io) 설치기까지 만듭니다.
+실행 OS를 감지해 flet 네이티브 앱을 빌드하고, Windows·macOS 에서는 [Velopack](https://velopack.io) 설치기까지 만듭니다.
+빌드는 **각 OS에서 로컬로** 실행합니다(크로스 컴파일하지 않습니다).
 
 ```bash
 python scripts/build.py                 # Velopack 설치기(dist/velopack/)만 빌드
-python scripts/build.py --gpu-runtime   # 설치기 빌드 + cuBLAS 온디맨드 에셋 zip(GPU 가속 배포용)
+python scripts/build.py --gpu-runtime   # 설치기 빌드 + cuBLAS 온디맨드 에셋 zip(GPU 가속 배포용, Windows)
 ```
 
-- 결과물(기본): `dist/velopack/` — 릴리스에는 **`Setup.exe`(설치) + `*.nupkg`(full/delta 업데이트 페이로드) + `releases.win.json`(피드)** 세 종류만 올리면 앱이 자동 업데이트(변경분만 받는 **델타** 포함)에 사용합니다. `Portable.zip`(대용량)·`RELEASES`(레거시)·`assets.win.json`(로컬 인덱스)은 GithubSource 가 쓰지 않으므로 올리지 않습니다.
-- **GPU는 온디맨드**: CPU 설치기에는 cuBLAS를 넣지 않습니다(가볍게). NVIDIA 사용자는 앱의 **고급 옵션 → GPU 가속 다운로드**로 cuBLAS 런타임을 받습니다. 이 런타임 zip은 `--gpu-runtime`으로 만들어 `gpu-runtime-cu12` 릴리스에 한 번 올려 둡니다(앱 버전과 무관). GPU가 없으면 앱이 자동으로 CPU(int8)로 폴백합니다.
+- 결과물(기본): `dist/velopack/`. 릴리스에 올리는 파일은 OS별로 다음 네 종류입니다(파일명이
+  `-win-`/`-osx-` 로 갈려 한 릴리스에 같이 있어도 충돌하지 않습니다).
+
+  | 채널 | 설치기 | 업데이트 페이로드 | 피드 |
+  | --- | --- | --- | --- |
+  | `win` (Windows) | `*-Setup.exe` | `*-<버전>-full.nupkg` · `*-<버전>-delta.nupkg` | `releases.win.json` |
+  | `osx` (macOS) | `*-Setup.pkg` | `*-<버전>-osx-full.nupkg` · `*-<버전>-osx-delta.nupkg` | `releases.osx.json` |
+
+  `Portable.zip`(대용량)·`RELEASES`(레거시)·`assets.*.json`(로컬 인덱스)은 GithubSource 가 쓰지
+  않으므로 올리지 않습니다. 델타(`*-delta.nupkg`)는 직전 릴리스가 있을 때만 만들어집니다.
+- **GPU는 온디맨드(Windows 전용)**: CPU 설치기에는 cuBLAS를 넣지 않습니다(가볍게). NVIDIA 사용자는 앱의 **고급 옵션 → GPU 가속 다운로드**로 cuBLAS 런타임을 받습니다. 이 런타임 zip은 `--gpu-runtime`으로 만들어 `gpu-runtime-cu12` 릴리스에 한 번 올려 둡니다(앱 버전과 무관). GPU가 없으면 앱이 자동으로 CPU(int8)로 폴백합니다.
 - 사전 준비(Windows): Visual Studio "Desktop development with C++" 워크로드 + [Velopack CLI](https://velopack.io)(`dotnet tool install -g vpk`)가 필요합니다. Flutter SDK는 `flet build`가 필요 시 자동으로 다운로드합니다.
+- 사전 준비(macOS): **전체 Xcode**(App Store에서 설치 후 `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer`) + **CocoaPods**(`brew install cocoapods`) + [Velopack CLI](https://velopack.io)(`dotnet tool install -g vpk` — [.NET SDK](https://dotnet.microsoft.com/download) 8 이상 필요). Command Line Tools(`xcode-select --install`)만으로는 빌드되지 않습니다 — Flutter의 macOS 데스크톱 빌드가 전체 Xcode를 요구합니다. macOS 빌드는 **Apple Silicon 전용(`--arch arm64`)**입니다: `cryptography`(google-genai가 의존)가 49.0.0부터 macOS 휠을 arm64만 배포해, universal 빌드의 x86_64 레그가 소스 컴파일로 떨어져 실패합니다. Intel까지 지원하려면 `cryptography<49`로 되돌려야 합니다. `vpk` 는 앱이 쓰는 `velopack` 파이썬 패키지와 **같은 1.2.0 계열**을 쓰십시오(메이저·마이너가 어긋나면 패키지 형식이 맞지 않습니다). Flutter SDK는 `flet build`가 자동으로 받습니다.
 
 **배포 (버전 릴리스 자동화)**
 
@@ -297,11 +385,30 @@ python scripts/build.py --gpu-runtime   # 설치기 빌드 + cuBLAS 온디맨드
 ```bash
 python scripts/deploy.py            # 버전 확인 -> 빌드 -> 릴리스 노트 생성 -> 릴리스 생성/업로드
 python scripts/deploy.py --dry-run  # 릴리스 노트만 생성해 출력(빌드·업로드 없음)
+python scripts/deploy.py --force    # 이미 올라간 같은 이름의 에셋을 덮어쓰며 재실행(복구용)
 ```
+
+**2단계 릴리스 — 두 OS의 에셋을 한 태그에 모읍니다**
+
+크로스 컴파일이 되지 않으므로 각 OS에서 한 번씩 실행합니다. 같은 스크립트가 상황을 보고
+"릴리스 생성" 또는 "기존 릴리스에 에셋 추가"로 갈립니다.
+
+1. **첫 번째 OS** — `python scripts/deploy.py` → 태그와 GitHub 릴리스를 새로 만들고, 릴리스
+   노트를 생성한 뒤 그 OS의 에셋을 업로드합니다.
+2. **두 번째 OS** — **반드시 같은 커밋·같은 버전**을 체크아웃한 뒤 `python scripts/deploy.py`
+   → 이미 있는 릴리스를 감지해 **에셋만 추가**합니다(릴리스 노트를 다시 만들지 않습니다).
+   - ⚠️ 다른 커밋에서 두 번째 OS를 빌드하면 같은 버전 태그 안에 **내용이 다른 두 빌드**가
+     섞입니다. 스크립트가 이를 강제하지 않으므로 사람이 지켜야 합니다.
+3. **왜 한 태그에 모아야 하는가** — Velopack의 델타 계산(`vpk download github`)은 **최신 릴리스
+   10개**만 훑습니다. OS별로 릴리스를 나누면 릴리스가 두 배 속도로 쌓여 직전 버전이 그 창
+   밖으로 밀려나고, 그러면 델타가 조용히 사라져 사용자가 매번 전체 패키지(100MB 단위)를 받게
+   됩니다. 파일명은 `-win-`/`-osx-` 접미어로 갈리므로 한 릴리스에 같이 둬도 충돌하지 않습니다.
+4. 업로드가 중간에 끊겼거나 같은 OS를 다시 올려야 하면 `--force`로 재실행합니다(같은 이름의
+   기존 에셋을 교체합니다).
 
 - 릴리스 노트는 이전 릴리스 태그 이후의 git 커밋 로그를 `claude -p`에 넘겨 생성합니다. 작성
   지침은 `scripts/release_notes_guide.md`에 있으며, 톤·형식을 바꾸고 싶으면 이 파일을 고치면
-  됩니다.
+  됩니다. **노트는 1단계에서 한 번만 생성**되므로 두 OS의 설치기를 모두 설명해야 합니다.
 - 사전 준비: 위 빌드 사전 준비 + [GitHub CLI](https://cli.github.com/)(`gh auth login`) +
   [Claude Code CLI](https://claude.com/claude-code)(`claude login`).
 - GPU 온디맨드 런타임(`gpu-runtime-cu12` 릴리스)은 앱 버전과 무관해 이 스크립트가 다루지
@@ -327,6 +434,16 @@ python scripts/build.py
   인증서나 오픈소스 무료 서명([SignPath Foundation](https://signpath.org/))이 필요합니다.
 - 정식 `.pfx` 인증서가 있으면 지문 대신 `YKE_SIGN_PFX`(+`YKE_SIGN_PFX_PASSWORD`)로 지정합니다.
 - 이미 빌드된 폴더를 재서명하려면: `python scripts/sign.py dist/yke-base-windows`
+
+**macOS 코드 서명·공증은 현재 범위 밖입니다.**
+
+- macOS 빌드는 **미서명·미공증**으로 배포합니다(Apple Developer Program 유료 멤버십이 필요해
+  이번 범위에서 제외했습니다). 그 결과 사용자는 최초 설치 시 위
+  [Gatekeeper 우회 절차](#macos)를 한 번 거쳐야 합니다 — README·릴리스 노트에서 이 안내를
+  빼면 "설치가 아예 안 된다"는 문의로 돌아옵니다.
+- 향후 Apple Developer ID 인증서를 도입하면 별도 스크립트 없이 Velopack 패키징 단계에
+  `vpk pack --signAppIdentity <Developer ID Application: …> --notaryProfile <프로필>` 을 붙여
+  서명·공증을 함께 처리합니다.
 
 **테스트**
 

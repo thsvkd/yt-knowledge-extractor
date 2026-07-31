@@ -9,9 +9,17 @@
 - 환경 구성: `python scripts/setup.py` (base + sherpa extra 포함. GPU STT 가속: `python scripts/setup.py --gpu`)
 - 앱 실행: `python scripts/run.py` (GUI) / `python scripts/run.py --cli [옵션]` (CLI, 뒤 인자는 `yke` 로 전달)
 - 빌드: `python scripts/build.py` → CPU flet 번들 + **Velopack 설치기**(`dist/velopack/`). GPU 는 온디맨드(`--gpu-runtime` 으로 cuBLAS 에셋 zip). 설치·자동업데이트는 Velopack(`src/yke/velopack_update.py`), GPU 온디맨드는 `src/yke/gpu_runtime.py`.
-- Windows 빌드는 flet 공식 빌드 템플릿을 패치해 쓴다(`scripts/flet_template.py`): 네이티브 러너 진입점에서 Velopack 훅(`--veloapp-*`)을 즉시 처리하고, 첫 창을 앱 크기로 만든다. 기준 문자열이 안 맞으면 빌드가 실패한다 — flet 버전을 올렸다면 거기부터 확인한다.
-- 배포: `python scripts/deploy.py` → 버전 확인(이전 릴리스와 같으면 중단) → 빌드 → `claude -p`
-  로 릴리스 노트 생성(지침: `scripts/release_notes_guide.md`) → GitHub 릴리스 생성/업로드.
+- Windows·macOS 빌드는 flet 공식 빌드 템플릿을 패치해 쓴다(`scripts/flet_template.py`): Windows 러너(`windows/runner/main.cpp`)는 Velopack 훅(`--veloapp-*`) 즉시 처리 + 첫 창 크기, macOS 러너(`macos/Runner/Base.lproj/MainMenu.xib`)는 첫 창 크기만. macOS 는 Velopack 이 훅 인자를 넘기지 않고(대신 `.pkg` postinstall 이 `VELOPACK_FIRSTRUN` 환경변수를 쓴다) 훅 처리가 필요 없다. 기준 문자열이 안 맞으면 빌드가 실패한다 — flet 버전을 올렸다면 거기부터 확인한다.
+- 플랫폼별 규약(채널 `win`/`osx`, `--mainExe` 이름, 업로드 글롭)은 `scripts/platform_spec.py` 한 곳에만 두고 `build.py`·`deploy.py` 가 그것만 참조한다. 여기서 갈라지면 "빌드는 됐는데 자동 업데이트가 안 되는" 조용한 실패가 난다. `src/yke/**` 는 런타임 번들에 `scripts/` 가 없으므로 이 모듈을 import 하지 않는다.
+- 배포: `python scripts/deploy.py` → 버전·릴리스 확인 → 빌드 → GitHub 릴리스 생성/업로드.
+  **OS 별로 로컬 빌드해 한 태그에 에셋을 모으는 2단계 흐름**이다: 먼저 실행한 OS 가
+  `gh release create` 로 릴리스를 만들며 `claude -p` 로 릴리스 노트를 생성하고(지침:
+  `scripts/release_notes_guide.md`), 두 번째 OS 는 **같은 커밋**에서 실행해 노트를 재생성하지
+  않고 `gh release upload` 로 자기 채널 에셋만 추가한다. 그래서 1단계 노트가 양쪽 플랫폼을
+  모두 설명해야 한다. 가드는 "이전 릴리스와 태그가 같으면 중단"이 아니라(그러면 두 번째 OS 가
+  정상 실행조차 못 한다) 셋으로 나뉜다 — (a) 그 릴리스에 내 채널의 `releases.<channel>.json`
+  이 이미 있음, (b) 그 태그가 최신 릴리스가 아님, (c) 태그가 가리키는 커밋 ≠ 현재 HEAD.
+  셋 다 `--force` 로만 뚫린다(중단된 업로드 재실행 복구용).
 - 테스트: `python scripts/test.py` (뒤 인자는 그대로 `pytest` 로 전달)
 
 직접 실행(래퍼가 감싸는 원 명령):

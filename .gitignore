@@ -20,4 +20,7 @@ __pycache__/
 .claude/
 .omc/
 
+# macOS Finder 부산물 (macOS 가 빌드/개발 플랫폼이라 어느 폴더에나 생긴다)
+.DS_Store
+
 # 참고: uv.lock 은 재현성을 위해 커밋한다(무시하지 않음).

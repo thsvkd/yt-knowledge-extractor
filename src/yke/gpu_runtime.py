@@ -9,6 +9,10 @@ CPU 설치본은 용량을 위해 cuBLAS 런타임을 포함하지 않는다. NV
 
 cuBLAS 런타임은 앱 버전과 거의 무관하므로, 앱 릴리스마다 재첨부하지 않고 전용 릴리스 태그
 (``gpu-runtime-cu12``)의 에셋 zip 하나를 공유한다(``build.py`` 가 이 zip 을 만든다).
+
+이 모듈은 **NVIDIA cuBLAS(Windows) 전용**이다 — macOS/Linux 에서는 :func:`cuda_available`
+이 항상 False 라 이 모듈의 다운로드/등록 경로가 실행되지 않는다(GUI 도 그 플랫폼에서는
+GPU UI 자체를 감춘다).
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ import zipfile
 from collections.abc import Callable
 from pathlib import Path
 
+from .appdirs import user_data_dir
 from .velopack_update import REPO_URL  # 같은 GitHub 레포를 재사용
 
 logger = logging.getLogger(__name__)
@@ -39,8 +44,7 @@ _USER_AGENT = "yke-gpu-runtime"
 
 def runtime_dir() -> Path:
     """온디맨드 cuBLAS 런타임을 두는 영속 경로(``current\\`` 밖, 업데이트에도 유지)."""
-    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    return Path(base) / _APP_ID / "gpu-runtime"
+    return user_data_dir(_APP_ID) / "gpu-runtime"
 
 
 def _site_nvidia_bin_dirs() -> list[Path]:

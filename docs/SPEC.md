@@ -116,7 +116,7 @@ CLI는 `data_dir`(캐시)와 `output_dir`(산출물)을 분리할 수 있고, GU
 - **CLI** (`yke`): `--stage transcript|extract|integrate|all`, `--stt-model`, `--limit`, `--force`.
 - **GUI** (`yke-gui`, flet 데스크톱): 영상/채널 URL 입력(+ 최근 N개), 실행 단계 2종
   (`전체(지식 문서화까지)` / `스크립트 추출까지`(기본) — 후자 선택 시 언어 모델 UI 비활성화),
-  STT 엔진(faster-whisper/Vosk)·스크립트 변환 모델·GPU 가속·언어 모델 선택, 자막 무시 후
+  STT 엔진(faster-whisper/sherpa-onnx)·스크립트 변환 모델·GPU 가속(Windows 에서만 표시)·언어 모델 선택, 자막 무시 후
   로컬 STT 강제 옵션, 진행바(단계/하위단계 실시간 타임라인 포함)·로그·중단, 산출물 열기.
 
 ## 7. 자격증명 · 배포 · 자체 업데이트
@@ -125,32 +125,72 @@ CLI는 `data_dir`(캐시)와 `output_dir`(산출물)을 분리할 수 있고, GU
   subprocess 로 호출한다(`src/yke/llm/claude_client.py`). 인증은 CLI 자체의 로그인 상태
   (`claude login`)를 그대로 쓰므로 앱이 토큰을 저장·주입하지 않는다. CLI 를 PATH 에서 찾지
   못하면 `ClaudeClient` 생성 시점에 안내 메시지와 함께 실패한다.
-- **빌드**: `scripts/build.py` → CPU flet 번들 + **Velopack 설치기**(`dist/velopack/`: Setup.exe,
-  `*-full/delta.nupkg`, `releases.win.json`). GPU 는 설치본에 넣지 않고 **온디맨드**로 받는다:
+- **빌드**: `scripts/build.py` → CPU flet 번들 + **Velopack 설치기**(`dist/velopack/`). 빌드는
+  크로스 컴파일하지 않고 **각 OS 로컬**에서 돈다. OS별 산출물은 다음과 같다(채널이 파일명에
+  박혀 한 폴더·한 릴리스에 섞여도 충돌하지 않는다).
+  - `win`(Windows): `*-Setup.exe`, `*-<버전>-full.nupkg`, `*-<버전>-delta.nupkg`, `releases.win.json`
+  - `osx`(macOS): `*-Setup.pkg`, `*-<버전>-osx-full.nupkg`, `*-<버전>-osx-delta.nupkg`, `releases.osx.json`
+
+  GPU 는 설치본에 넣지 않고 **온디맨드**로 받는다(Windows 전용):
   `--gpu-runtime` 으로 cuBLAS 런타임 zip 을 만들어 `gpu-runtime-cu12` 릴리스에 올려 두고, 앱이
   NVIDIA 감지 시 `%LocalAppData%\…\gpu-runtime`(current\ 밖, 업데이트에도 유지)으로 내려받아
   STT 를 GPU 로 돌린다(`src/yke/gpu_runtime.py`, `stage3_stt._register_cuda_dll_dirs`). ctranslate2
   가 cuDNN 로더를 자체 번들하므로 cuBLAS 만 받으면 된다(실측 확인). CPU 설치기≈160MB.
+  macOS 는 cuBLAS 가 무의미하므로 GUI 에서 GPU UI 자체를 감춘다.
+- **플랫폼 규약의 단일 소스**: 채널명·`--mainExe` 이름·업로드 글롭은 `scripts/platform_spec.py`
+  한 곳에만 두고 `build.py`(패킹)와 `deploy.py`(업로드)가 그것만 참조한다. 두 스크립트가 각자
+  파일명 규칙을 하드코딩하면 "빌드는 됐는데 자동 업데이트가 안 되는" 조용한 실패가 난다
+  (Velopack 은 릴리스에서 `releases.<channel>.json` 을 **이름 완전 일치**로만 찾는다).
 - **배포**: `scripts/deploy.py` → `pyproject.toml`의 `[project].version`(SSOT, 수동 변경
-  필요, 이전 릴리스와 같으면 중단) 확인 → `build.py` 빌드(이때 `src/yke/__init__.py`의
+  필요) 확인 → `build.py` 빌드(이때 `src/yke/__init__.py`의
   `__version__`을 pyproject.toml 기준으로 자동 동기화 — flet build가 앱을 site-packages로
   정식 설치하지 않고 `src/`를 그대로 복사해 넣으므로 배포된 앱에서 `importlib.metadata`로
   버전을 읽을 수 없어서다) → 이전 릴리스 태그 이후 커밋 로그를 `claude -p`에 넘겨(지침:
   `scripts/release_notes_guide.md`) 릴리스 노트 생성 → GitHub 릴리스 생성 + 에셋 업로드.
-- **설치 · 자체 업데이트**: [Velopack](https://velopack.io)(Squirrel 후속) 사용. 설치본은
-  `%LocalAppData%\YtKnowledgeExtractor\current\` **고정 경로**(OneDrive 로 리다이렉트된 폴더 경합
-  회피)에 놓이고, GitHub Releases 의 `releases.win.json` + nupkg(**델타 우선**)로 갱신한다. GUI
-  (`src/yke/velopack_update.py` 래퍼)가 시작 시 자동 확인 + 수동 버튼으로 `UpdateManager` 를
-  호출한다. 서명(YKE_SIGN_THUMBPRINT/PFX)은 Velopack 이 전 파일에 적용한다. (기존 커스텀 사이드카
+  **두 OS의 에셋은 한 태그에 모은다**: 먼저 실행한 OS 가 릴리스와 노트를 만들고, 두 번째 OS 는
+  같은 커밋에서 실행해 에셋만 추가한다(노트 재생성 없음). OS별로 릴리스를 쪼개면 Velopack 의
+  델타 계산이 훑는 최신 릴리스 10개 창 밖으로 직전 버전이 밀려나 델타가 조용히 사라진다.
+  이 흐름 때문에 "이전 릴리스와 태그가 같으면 중단" 가드는 쓸 수 없다(두 번째 OS 가 정상
+  실행조차 못 한다). 대신 릴리스가 이미 있을 때 셋을 본다 — (a) 그 릴리스에 내 채널의
+  `releases.<channel>.json` 이 이미 있는가(= 이미 배포함), (b) 그 태그가 최신 릴리스인가
+  (= 낡은 체크아웃이 아닌가), (c) 태그가 가리키는 커밋이 현재 HEAD 와 같은가(= 첫 OS 와
+  같은 커밋인가). 셋 다 `--force` 로만 뚫린다. (c)가 없으면 **아직 한 번도 릴리스된 적 없는
+  채널**에는 가드가 하나도 걸리지 않아, 버전을 안 올린 채 그 버전이 아닌 코드가 그 버전으로
+  배포된다.
+- **설치 · 자체 업데이트**: [Velopack](https://velopack.io)(Squirrel 후속) 사용. 채널은
+  `win`/`osx` 두 개이고 피드 파일명도 채널별(`releases.win.json` / `releases.osx.json`)이다.
+  채널은 패키징 시점에 nuspec 에 박혀 설치본이 스스로 알므로, 런타임(`UpdateManager`)에서
+  `ExplicitChannel` 을 넘기지 않는다(넘기면 win 설치본이 osx 피드를 보는 채널 전환 버그가 된다).
+  - Windows: `%LocalAppData%\YtKnowledgeExtractor\current\` **고정 경로**(OneDrive 로
+    리다이렉트된 폴더 경합 회피). 업데이트는 `current\` 를 통째로 교체한다.
+  - macOS: 설치 시 고른 `/Applications` 또는 `~/Applications` 아래
+    `YouTube Knowledge Extractor.app`(번들 이름 = `vpk --packTitle`). 업데이트는 `.app` 을
+    `renamex_np` 로 원자 교체하며, 캐시는 `~/Library/Caches/velopack/YtKnowledgeExtractor/packages`
+    에 둔다. `/Applications` 설치본은 교체 시 관리자 인증 팝업이 뜰 수 있다.
+
+  GUI(`src/yke/velopack_update.py` 래퍼)가 시작 시 자동 확인 + 수동 버튼으로 `UpdateManager` 를
+  호출한다. 사용자 데이터(GUI 설정·GPU 런타임)는 설치 폴더 밖 OS 관습 경로에 둔다
+  (`src/yke/appdirs.py`) — 설치 폴더는 업데이트 때 통째로 교체되기 때문이다. 서명
+  (YKE_SIGN_THUMBPRINT/PFX)은 Velopack 이 전 파일에 적용한다. (기존 커스텀 사이드카
   updater 는 Velopack 으로 대체됨.)
-- **설치/업데이트 라이프사이클 훅**(`--veloapp-*`)은 파이썬이 아니라 **네이티브 러너 진입점**에서
-  처리한다(`scripts/flet_template.py` 가 flet 빌드 템플릿의 `windows/runner/main.cpp` 를 패치).
-  flet 이 만드는 Flutter 러너는 명령행 인자가 하나라도 있으면 "개발자 모드"로 간주해 파이썬을
-  아예 실행하지 않으므로, `src/main.py` 에서 `velopack.App().run()` 을 부르는 방식은 동작하지
-  않았다 — 훅이 30초 타임아웃 후 강제 종료되어 설치기가 "설치가 부분적으로 성공했습니다" 경고를
-  띄웠다. 같은 패치가 첫 창을 처음부터 앱 크기(`gui.py` 의 `_WINDOW_WIDTH/_WINDOW_HEIGHT`)로
-  만들어, 1280x720 으로 떴다가 줄어드는 깜빡임도 없앤다(러너는 Flutter 첫 프레임에서 창을
-  보여주는데, 그 시점은 파이썬이 붙기 한참 전이다).
+- **macOS 는 미서명·미공증 배포**다(Apple Developer ID 도입은 범위 밖). 따라서 최초 설치 시
+  Gatekeeper 우회 절차(Control-클릭 열기 → 시스템 설정 > 개인정보 보호 및 보안 > "그래도 열기"
+  → 필요 시 `xattr -dr com.apple.quarantine`)가 **배포 경로의 일부**이며, README 의 안내가
+  없으면 사용자가 설치 자체를 못 한다.
+- **설치/업데이트 라이프사이클 훅**(`--veloapp-*`)은 **Windows 한정**이며, 파이썬이 아니라
+  **네이티브 러너 진입점**에서 처리한다. flet 이 만드는 Flutter 러너는 명령행 인자가 하나라도
+  있으면 "개발자 모드"로 간주해 파이썬을 아예 실행하지 않으므로, `src/main.py` 에서
+  `velopack.App().run()` 을 부르는 방식은 동작하지 않았다 — 훅이 30초 타임아웃 후 강제 종료되어
+  설치기가 "설치가 부분적으로 성공했습니다" 경고를 띄웠다. macOS 는 훅 인자를 아예 넘기지 않고
+  `.pkg` postinstall 이 `VELOPACK_FIRSTRUN`(첫 실행)·`VELOPACK_RESTART`(업데이트 후 재시작)
+  **환경변수**로 알리므로, macOS 러너에는 훅 패치가 필요 없다.
+- **flet 빌드 템플릿 패치**(`scripts/flet_template.py`)는 두 곳이다.
+  - `windows/runner/main.cpp` — Velopack 훅 조기 처리 + 첫 창 크기.
+  - `macos/Runner/Base.lproj/MainMenu.xib` — 첫 창 크기만(훅 처리는 불필요).
+
+  창 크기는 `gui.py` 의 `_WINDOW_WIDTH/_WINDOW_HEIGHT` 가 SSOT 이며, 러너가 처음부터 그 크기로
+  창을 만들어야 1280x720 으로 떴다가 줄어드는 깜빡임이 없다(러너는 Flutter 첫 프레임에서 창을
+  보여주는데, 그 시점은 파이썬이 붙기 한참 전이다). 기준 문자열이 안 맞으면 빌드가 실패한다.
 - 설치본 유지보수(`velopack.App().run()` — 오래된 nupkg 정리·받아 둔 업데이트 적용)는
   `run_startup_maintenance()` 로 **워커 스레드에서** 부른다. velopack 은 네이티브 모듈이라
   import 만 0.5초 이상이라 시작 경로에 둘 수 없고, 그렇다고 빼면 업데이트마다 이전 전체
