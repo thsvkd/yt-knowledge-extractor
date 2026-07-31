@@ -1597,9 +1597,12 @@ class PipelineGUI:
                 ft.Colors.GREEN,
             )
         else:
+            # 합본(모든 영상 스크립트를 한 파일로)이 있으면 파일 이름을 함께 알려 준다.
+            merged = result.all_transcripts_path or result.all_transcripts_raw_path
+            merged_note = f" · 합본 {merged.name}" if merged else ""
             self._set_status(
                 f"완료 — 영상 {result.video_count}개 스크립트 추출 완료. "
-                f"({tally}, 경과 {elapsed})",
+                f"({tally}, 경과 {elapsed}){merged_note}",
                 ft.Colors.GREEN,
             )
         self.open_btn.disabled = False

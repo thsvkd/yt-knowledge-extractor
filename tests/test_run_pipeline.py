@@ -620,6 +620,124 @@ class TestBuildTranscriptPriority(unittest.TestCase):
             )
         self.assertEqual([s.text for s in segs], ["캐시된 원본"])
 
+    def test_video_dir_is_named_by_title(self):
+        # 영상 폴더는 "<제목> [<영상ID>]" 로 만들어진다(제목은 probe 결과에서).
+        meta = self._meta(manual_sub_lang="ko")
+        parse = mock.Mock(
+            return_value=[
+                Segment(start=0, end=300, text="앞부분"),
+                Segment(start=305, end=600, text="뒷부분"),
+            ]
+        )
+
+        def stt(*a, **k):
+            raise AssertionError("자막 경로")
+
+        with self._patched(meta, stt, parse):
+            with mock.patch.object(
+                run.stage1_ingest, "probe", return_value={"id": self.vid, "title": "제목: 첫/화"}
+            ):
+                run.build_transcript("testvid", self._cfg(), self.data, False)
+        # 금지 문자(:,/)는 공백으로 바뀌고, 예전 ID 폴더는 새 이름으로 옮겨진다.
+        root = self.data / f"제목 첫 화 [{self.vid}]"
+        self.assertTrue((root / "transcript.raw.txt").exists())
+        self.assertFalse((self.data / self.vid).exists())
+
+
+class TestMergedTranscripts(unittest.TestCase):
+    """모든 영상의 스크립트를 한 파일로 합친 산출물 검증."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cfg = Config(
+            videos=[],
+            data_dir=f"{self.tmp.name}/data",
+            output_dir=f"{self.tmp.name}/out",
+        )
+        self.out = Path(self.cfg.output_dir)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_raw_merge_written_for_all_videos(self) -> None:
+        def bt(url, cfg, data_dir, force, *, log=print, on_progress=None, on_stt_progress=None, should_stop=None):
+            vid = "v_" + url
+            meta = {"id": vid, "title": f"{url} 제목", "transcript_source": "manual",
+                    "duration": 65, "channel": "채널", "webpage_url": f"https://y/{vid}"}
+            return vid, meta, [Segment(start=0.0, end=1.0, text=f"{url} 내용")]
+
+        with mock.patch.object(run, "build_transcript", side_effect=bt):
+            res = run.run_pipeline(["u1", "u2"], self.cfg, stage="transcript")
+
+        merged = self.out / run.ALL_TRANSCRIPTS_RAW_TXT
+        self.assertEqual(res.all_transcripts_raw_path, merged)
+        self.assertIsNone(res.all_transcripts_path)  # 보정을 안 켰으면 보정본 합본은 없다
+        text = merged.read_text(encoding="utf-8")
+        # 영상마다 제목 헤더 + 본문이 처리 순서대로 들어간다.
+        self.assertIn("[1/2] u1 제목", text)
+        self.assertIn("[2/2] u2 제목", text)
+        self.assertIn("[00:00] u1 내용", text)
+        self.assertIn("[00:00] u2 내용", text)
+        # 헤더에 영상 ID·채널·길이·소스·URL 이 함께 남는다.
+        self.assertIn("영상 ID: v_u1", text)
+        self.assertIn("채널: 채널", text)
+        self.assertIn("길이: 1:05", text)
+        self.assertIn("소스: 수동 자막", text)
+        self.assertIn("https://y/v_u1", text)
+        self.assertLess(text.index("[1/2]"), text.index("[2/2]"))
+
+    def test_repaired_merge_written_alongside_raw(self) -> None:
+        self.cfg.llm = LLMConfig(provider="claude", repair_transcript=True)
+
+        def repair(segs, llm_cfg, client, *, log=print, should_stop=lambda: False):
+            return [s.model_copy(update={"text": s.text + "(보정)"}) for s in segs]
+
+        with (
+            mock.patch.object(run, "build_transcript", side_effect=_fake_bt),
+            mock.patch("yke.llm.make_client", return_value=mock.Mock()),
+            mock.patch.object(run.stage_repair, "repair_segments", side_effect=repair),
+        ):
+            res = run.run_pipeline(["u1"], self.cfg, stage="transcript")
+
+        raw = (self.out / run.ALL_TRANSCRIPTS_RAW_TXT).read_text(encoding="utf-8")
+        fixed = (self.out / run.ALL_TRANSCRIPTS_TXT).read_text(encoding="utf-8")
+        self.assertEqual(res.all_transcripts_path, self.out / run.ALL_TRANSCRIPTS_TXT)
+        self.assertIn("[00:00] hi\n", raw)  # 원본 합본은 보정 전 내용을 보존한다
+        self.assertNotIn("(보정)", raw)
+        self.assertIn("[00:00] hi(보정)", fixed)
+
+    def test_partial_merge_written_when_stopped(self) -> None:
+        processed = {"n": 0}
+
+        def bt(url, cfg, data_dir, force, *, log=print, on_progress=None, on_stt_progress=None, should_stop=None):
+            processed["n"] += 1
+            return "v_" + url, {"id": "v_" + url, "title": url}, _seg()
+
+        with mock.patch.object(run, "build_transcript", side_effect=bt):
+            res = run.run_pipeline(
+                ["a", "b", "c"],
+                self.cfg,
+                stage="transcript",
+                should_stop=lambda: processed["n"] >= 1,
+            )
+        self.assertTrue(res.stopped)
+        # 중단돼도 그때까지 확보한 영상의 합본은 남는다.
+        text = (self.out / run.ALL_TRANSCRIPTS_RAW_TXT).read_text(encoding="utf-8")
+        self.assertIn("[1/1] a", text)
+
+    def test_channel_merge_lands_in_channel_folder(self) -> None:
+        # 채널 입력이면 산출물이 채널 하위 폴더로 정리되므로 합본도 거기에 있어야 한다.
+        entries = [run.stage1_ingest.VideoEntry(url="https://youtu.be/x", video_id="x")]
+        with (
+            mock.patch.object(run.stage1_ingest, "expand_source", return_value=entries),
+            mock.patch.object(run, "build_transcript", side_effect=_fake_bt),
+        ):
+            res = run.run_pipeline(
+                ["https://www.youtube.com/@chan"], self.cfg, stage="transcript"
+            )
+        self.assertEqual(res.all_transcripts_raw_path, self.out / "chan" / run.ALL_TRANSCRIPTS_RAW_TXT)
+        self.assertTrue(res.all_transcripts_raw_path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

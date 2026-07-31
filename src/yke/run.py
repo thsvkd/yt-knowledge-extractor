@@ -147,6 +147,9 @@ class PipelineResult:
     out_dir: Path | None = None
     wiki_path: Path | None = None
     clusters_path: Path | None = None
+    # 모든 영상의 스크립트를 한 파일로 이어 붙인 합본(저장 폴더 최상위).
+    all_transcripts_raw_path: Path | None = None  # 원본 합본(항상 생성)
+    all_transcripts_path: Path | None = None  # LLM 보정본 합본(보정했을 때만)
     failures: list[str] = field(default_factory=list)
     # 영상별 처리 기록(완료/실패/스킵). 완료 요약·리포트의 원천.
     results: list[VideoRecord] = field(default_factory=list)
@@ -369,6 +372,61 @@ def _write_transcript(json_path: Path, txt_path: Path, segs: list[Segment]) -> N
     txt_path.write_text(_segments_to_text(segs), encoding="utf-8")
 
 
+# 모든 영상의 스크립트를 한 파일로 이어 붙인 합본(저장 폴더 최상위). 영상별 폴더의
+# 트랜스크립트와 별개로, 채널 전체를 통째로 읽거나 다른 도구에 넣기 좋게 남긴다.
+ALL_TRANSCRIPTS_RAW_TXT = "transcripts.all.raw.txt"  # 원본 합본(항상)
+ALL_TRANSCRIPTS_TXT = "transcripts.all.txt"  # LLM 보정본 합본(보정했을 때만)
+
+_MERGE_RULE = "=" * 78
+
+
+def _merged_section(index: int, total: int, vid: str, meta: dict, segs: list[Segment]) -> str:
+    """합본에 들어갈 영상 하나의 구획(제목 헤더 + 트랜스크립트 본문)을 만든다."""
+    title = meta.get("title") or vid
+    facts = [f"영상 ID: {vid}"]
+    if meta.get("channel"):
+        facts.append(f"채널: {meta['channel']}")
+    if meta.get("duration"):
+        facts.append(f"길이: {_fmt_hms(float(meta['duration']))}")
+    src = meta.get("transcript_source")
+    if src:
+        facts.append(f"소스: {_SOURCE_LABELS.get(src, src)}")
+    lines = [
+        _MERGE_RULE,
+        f"[{index}/{total}] {title}",
+        " · ".join(facts),
+    ]
+    if meta.get("webpage_url"):
+        lines.append(str(meta["webpage_url"]))
+    lines.append(_MERGE_RULE)
+    return "\n".join(lines) + "\n\n" + _segments_to_text(segs) + "\n"
+
+
+def _write_merged_transcript(
+    out_dir: Path,
+    filename: str,
+    transcripts: dict[str, list[Segment]],
+    metas: dict[str, dict],
+    *,
+    kind: str,
+) -> Path | None:
+    """확보한 모든 영상의 스크립트를 한 파일로 이어 붙여 ``out_dir`` 에 쓴다.
+
+    영상 순서는 처리 순서를 그대로 따른다. 쓸 내용이 없으면(트랜스크립트 0개) 파일을
+    만들지 않고 ``None`` 을 돌려준다.
+    """
+    if not transcripts:
+        return None
+    total = len(transcripts)
+    body = "".join(
+        _merged_section(i, total, vid, metas.get(vid) or {}, segs)
+        for i, (vid, segs) in enumerate(transcripts.items(), start=1)
+    )
+    path = out_dir / filename
+    path.write_text(f"# 전체 트랜스크립트 합본 ({kind}) — 영상 {total}개\n\n{body}", encoding="utf-8")
+    return path
+
+
 def _load_cached_raw(vp: VideoPaths) -> list[Segment] | None:
     """캐시된 '원본' 트랜스크립트를 로드한다(raw.json 우선, 레거시 transcript.json 폴백)."""
     for p in (vp.transcript_raw, vp.transcript):
@@ -410,7 +468,9 @@ def build_transcript(
     # 완전 캐시된 경우 URL 에서 id 를 뽑아 네트워크 조회 없이 로딩(오프라인 재실행 가능)
     cached_id = _video_id_from_url(url)
     if cached_id and not force:
-        vp = VideoPaths(data_dir, cached_id)
+        # 캐시 확인일 뿐이므로 폴더를 새로 만들지 않는다(제목을 아직 모르는 시점이라,
+        # 만들면 영상 ID 이름의 빈 폴더가 남는다). 기존 폴더는 VideoPaths 가 찾아 준다.
+        vp = VideoPaths(data_dir, cached_id, create=False)
         if vp.meta.exists():
             segs = _load_cached_raw(vp)
             if segs is not None:
@@ -420,7 +480,8 @@ def build_transcript(
     _substep("ingest", f"메타·자막 정보 확인 중… {url}")
     info = stage1_ingest.probe(url, log=log)
     vid = info["id"]
-    vp = VideoPaths(data_dir, vid)
+    # 제목을 알았으니 "<제목> [<영상ID>]" 폴더에 정리한다(예전 ID 폴더가 있으면 옮겨진다).
+    vp = VideoPaths(data_dir, vid, info.get("title"))
     meta = stage1_ingest.build_meta(info, vp, cfg.language, cfg.subtitles)
 
     if not force:
@@ -600,12 +661,40 @@ def run_pipeline(
     results: list[VideoRecord] = []
     videos = _resolve_sources(videos, channel_limit, failures, on_progress, should_stop)
 
+    def _write_all_transcripts(
+        filename: str, srcs: dict[str, list[Segment]], *, kind: str
+    ) -> Path | None:
+        """합본 파일을 쓰고 경로를 로그로 알린다(쓰기 실패는 실행을 막지 않는다)."""
+        try:
+            path = _write_merged_transcript(out_dir, filename, srcs, metas, kind=kind)
+        except Exception as exc:
+            on_progress(
+                Progress(
+                    message=f"합본 트랜스크립트 저장 실패({kind}): {type(exc).__name__}: {exc}",
+                    level="warning",
+                    phase="transcript",
+                )
+            )
+            return None
+        if path is not None:
+            # 영상별 성공 이벤트가 아니라 실행 단위 산출물이므로 info 로 남긴다.
+            on_progress(
+                Progress(
+                    message=f"합본 트랜스크립트 저장({kind}, 영상 {len(srcs)}개): {path}",
+                    phase="transcript",
+                )
+            )
+        return path
+
     def _stopped_now(elapsed: float) -> PipelineResult:
         _emit_summary(results, elapsed, on_progress)
         _write_report(out_dir, results, elapsed)
+        # 중간에 멈춰도 그때까지 확보한 스크립트로 합본을 남긴다.
+        raw_path = _write_all_transcripts(ALL_TRANSCRIPTS_RAW_TXT, raw_transcripts, kind="원본")
         return PipelineResult(
             video_count=len(transcripts),
             out_dir=out_dir,
+            all_transcripts_raw_path=raw_path,
             failures=failures,
             results=results,
             elapsed_seconds=elapsed,
@@ -615,6 +704,9 @@ def run_pipeline(
     # --- 1~4단계: 트랜스크립트 ---
     metas: dict[str, dict] = {}
     transcripts: dict[str, list[Segment]] = {}
+    # 원본(보정 전) 스크립트. transcripts 는 이후 보정본으로 교체되므로, 원본 합본을 위해
+    # 따로 보관한다.
+    raw_transcripts: dict[str, list[Segment]] = {}
     total = len(videos)
     for i, entry in enumerate(videos, start=1):
         url = entry.url
@@ -704,6 +796,7 @@ def run_pipeline(
             continue
         metas[vid] = meta
         transcripts[vid] = segs
+        raw_transcripts[vid] = segs
         src = meta.get("transcript_source")
         rec = VideoRecord(
             url=url,
@@ -757,6 +850,11 @@ def run_pipeline(
             )
         raise RuntimeError("처리할 영상이 없습니다.")
 
+    # 영상별 폴더의 스크립트와 별개로, 확보한 모든 영상의 원본 스크립트를 한 파일로 합쳐
+    # 저장 폴더 최상위에 남긴다. (보정본 합본은 4.5단계 뒤에)
+    all_raw_path = _write_all_transcripts(ALL_TRANSCRIPTS_RAW_TXT, raw_transcripts, kind="원본")
+    all_path: Path | None = None
+
     # --- 4.5단계: 트랜스크립트 LLM 보정(선택, cfg.llm.repair_transcript) ---
     # 트랜스크립트를 확보한 직후, 깨진 자막(수동/자동)을 LLM 으로 교정한다. LLM 을 쓰므로
     # 여기서 클라이언트를 처음 만들고(자격증명 없으면 보정만 건너뛴다), 이후 추출/통합
@@ -782,8 +880,8 @@ def run_pipeline(
             for i, (vid, segs) in enumerate(transcripts.items(), start=1):
                 if should_stop():
                     return _stopped_now(time.monotonic() - t0)
-                vp = VideoPaths(data_dir, vid)
                 meta = metas.get(vid, {})
+                vp = VideoPaths(data_dir, vid, meta.get("title"))
                 # 이미 보정된 캐시가 있으면(재실행) 보정본을 메모리로 로드해 다운스트림이 쓰게
                 # 하고, 재보정으로 LLM 을 낭비하지 않는다.
                 if not force and meta.get("transcript_repaired") and vp.transcript.exists():
@@ -834,11 +932,15 @@ def run_pipeline(
                         total=rtotal,
                     )
                 )
+            # 보정을 실제로 돌렸다 — 보정본 합본도 남긴다(원본 합본은 그대로 보존).
+            all_path = _write_all_transcripts(ALL_TRANSCRIPTS_TXT, transcripts, kind="LLM 보정본")
 
     if should_stop():
         return PipelineResult(
             video_count=len(transcripts),
             out_dir=out_dir,
+            all_transcripts_raw_path=all_raw_path,
+            all_transcripts_path=all_path,
             failures=failures,
             results=results,
             elapsed_seconds=time.monotonic() - t0,
@@ -856,6 +958,8 @@ def run_pipeline(
         return PipelineResult(
             video_count=len(transcripts),
             out_dir=out_dir,
+            all_transcripts_raw_path=all_raw_path,
+            all_transcripts_path=all_path,
             failures=failures,
             results=results,
             elapsed_seconds=time.monotonic() - t0,
@@ -877,12 +981,14 @@ def run_pipeline(
                 video_count=len(transcripts),
                 unit_count=len(all_units),
                 out_dir=out_dir,
+                all_transcripts_raw_path=all_raw_path,
+                all_transcripts_path=all_path,
                 failures=failures,
                 results=results,
                 elapsed_seconds=time.monotonic() - t0,
                 stopped=True,
             )
-        vp = VideoPaths(data_dir, vid)
+        vp = VideoPaths(data_dir, vid, (metas.get(vid) or {}).get("title"))
         if vp.units.exists() and not force:
             units = [KnowledgeUnit(**u) for u in json.loads(vp.units.read_text(encoding="utf-8"))]
         else:
@@ -923,6 +1029,8 @@ def run_pipeline(
             video_count=len(transcripts),
             unit_count=len(all_units),
             out_dir=out_dir,
+            all_transcripts_raw_path=all_raw_path,
+            all_transcripts_path=all_path,
             failures=failures,
             results=results,
             elapsed_seconds=time.monotonic() - t0,
@@ -933,6 +1041,8 @@ def run_pipeline(
             video_count=len(transcripts),
             unit_count=len(all_units),
             out_dir=out_dir,
+            all_transcripts_raw_path=all_raw_path,
+            all_transcripts_path=all_path,
             failures=failures,
             results=results,
             elapsed_seconds=time.monotonic() - t0,
@@ -973,6 +1083,8 @@ def run_pipeline(
         out_dir=out_dir,
         wiki_path=wiki_path,
         clusters_path=clusters_path,
+        all_transcripts_raw_path=all_raw_path,
+        all_transcripts_path=all_path,
         failures=failures,
         results=results,
         elapsed_seconds=elapsed,

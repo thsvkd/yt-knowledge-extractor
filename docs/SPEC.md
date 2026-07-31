@@ -76,15 +76,27 @@ STT 시장 참고(2026 기준): 영어권은 Whisper large-v3·상용 API가 강
 ## 5. 산출물
 
 ```
-<저장 폴더>/[<채널·재생목록 슬러그>/]<video_id>/
+<저장 폴더>/[<채널·재생목록 슬러그>/]<영상 제목> [<video_id>]/
   meta.json         # 제목/설명/업로드일/챕터 등
   audio.*           # 다운로드 오디오
   transcript.json   # 정제된 세그먼트 (start/end/text)
   units.json        # 지식 원자 단위
 <저장 폴더>/[<채널·재생목록 슬러그>/]
+  transcripts.all.raw.txt  # 모든 영상 스크립트 합본 (원본, 항상)
+  transcripts.all.txt      # 모든 영상 스크립트 합본 (LLM 보정본, 보정 시)
   clusters.json     # 통합 개념 클러스터 (구조화)
   wiki.md           # 최종 지식베이스 (사람 검토 대상)
 ```
+
+영상 폴더 이름은 사람이 알아볼 수 있도록 **영상 제목**을 쓰고, 제목 충돌·캐시 조회를
+위해 `[<video_id>]`를 접미사로 붙인다(`paths.video_dir_name`). 폴더 이름에 쓸 수 없는
+문자는 공백으로 치환하고 길이를 자른다(`paths.sanitize_folder_name`). 제목을 모르는
+시점(캐시 확인)에는 ID 접미사로 기존 폴더를 찾고(`paths.find_video_dir`), 예전 레이아웃의
+`<video_id>` 폴더도 인식해 제목을 알게 되면 새 이름으로 옮긴다(이동 실패 시 기존 폴더 유지).
+
+합본(`transcripts.all*.txt`)은 영상별 트랜스크립트와 별개로, 이번 실행에서 확보한 모든
+영상의 스크립트를 처리 순서대로 이어 붙인 파일이다(영상마다 제목·ID·채널·길이·소스·URL
+헤더). 중단해도 그때까지 확보한 분량으로 남는다.
 
 `audio.<lang>.vtt`(수동/자동 자막)는 `transcript.json`으로 파싱된 뒤 삭제되어 영속
 산출물에 포함되지 않는다(재실행 시 `transcript.json` 캐시 히트로 다시 읽지 않음).
