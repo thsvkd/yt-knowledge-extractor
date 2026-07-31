@@ -41,7 +41,15 @@ dependencies = [
 gpu = ["nvidia-cublas-cu12"]
 # non-AI STT 대안 엔진(Vosk, 경량 오프라인, stage3_stt_vosk 참고). 대부분의 사용자는 쓰지
 # 않는 대안 경로라 gpu 와 같은 이유로 optional 로 둔다. 설치: `uv sync --extra vosk`
-vosk = ["vosk>=0.3.45"]
+#
+# 플랫폼별 버전: vosk 0.3.45 는 리눅스/윈도우 휠만 내고 macOS 휠을 빼서, macOS(특히 Apple
+# Silicon)에서 `uv sync --extra vosk` 가 "no wheel for the current platform" 으로 실패한다.
+# macOS 휠(universal2, Intel·Apple Silicon 겸용)이 있는 마지막 버전이 0.3.44 이므로 그쪽만
+# 고정한다. 배포 대상(Windows)과 CI 는 계속 최신을 쓴다.
+vosk = [
+    "vosk>=0.3.45; sys_platform != 'darwin'",
+    "vosk==0.3.44; sys_platform == 'darwin'",
+]
 
 [project.scripts]
 yke = "yke.run:main"
