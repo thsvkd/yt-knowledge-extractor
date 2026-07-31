@@ -37,7 +37,7 @@ class TestDownloadRetry(unittest.TestCase):
         ydl = mock.MagicMock()
         ydl.extract_info.side_effect = side_effect
         ydl.__enter__.return_value = ydl
-        return mock.patch.object(stage1_ingest.yt_dlp, "YoutubeDL", return_value=ydl)
+        return mock.patch.object(yt_dlp, "YoutubeDL", return_value=ydl)
 
     def test_succeeds_first_try_without_retry(self):
         with (

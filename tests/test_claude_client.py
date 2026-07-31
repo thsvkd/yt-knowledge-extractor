@@ -16,28 +16,28 @@ def _completed(stdout: str = "", stderr: str = "", returncode: int = 0) -> mock.
 
 class TestIsAvailable(unittest.TestCase):
     def test_true_when_bin_found(self):
-        with mock.patch.object(claude_client, "_CLAUDE_BIN", "C:/fake/claude.exe"):
+        with mock.patch.object(claude_client, "_claude_bin", return_value="C:/fake/claude.exe"):
             self.assertTrue(claude_client.is_available())
 
     def test_false_when_bin_missing(self):
-        with mock.patch.object(claude_client, "_CLAUDE_BIN", None):
+        with mock.patch.object(claude_client, "_claude_bin", return_value=None):
             self.assertFalse(claude_client.is_available())
 
 
 class TestClaudeClientInit(unittest.TestCase):
     def test_raises_when_cli_missing(self):
-        with mock.patch.object(claude_client, "_CLAUDE_BIN", None):
+        with mock.patch.object(claude_client, "_claude_bin", return_value=None):
             with self.assertRaises(RuntimeError):
                 claude_client.ClaudeClient()
 
     def test_ok_when_cli_found(self):
-        with mock.patch.object(claude_client, "_CLAUDE_BIN", "C:/fake/claude.exe"):
+        with mock.patch.object(claude_client, "_claude_bin", return_value="C:/fake/claude.exe"):
             claude_client.ClaudeClient()  # 예외 없이 통과
 
 
 class TestComplete(unittest.TestCase):
     def setUp(self) -> None:
-        patcher = mock.patch.object(claude_client, "_CLAUDE_BIN", "C:/fake/claude.exe")
+        patcher = mock.patch.object(claude_client, "_claude_bin", return_value="C:/fake/claude.exe")
         patcher.start()
         self.addCleanup(patcher.stop)
         self.client = claude_client.ClaudeClient()

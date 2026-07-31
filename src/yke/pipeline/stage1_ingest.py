@@ -14,6 +14,10 @@
 (.m4a/.webm)를 직접 디코딩한다.
 
 트랜스크립트 우선순위(합의): 수동 자막 > 유튜브 자동 자막 > faster-whisper STT.
+
+``yt_dlp`` 는 쓰는 함수 안에서 지연 import 한다 — GUI(gui.py → run.py → 이 모듈)는 시작
+할 때 이 모듈을 import 하지만 실제 다운로드는 사용자가 '시작'을 누른 뒤에야 일어난다.
+모듈 최상단에서 import 하면 그 비용(수백 ms)을 첫 화면이 뜨기 전에 그대로 낸다.
 """
 
 from __future__ import annotations
@@ -24,8 +28,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
-
-import yt_dlp
 
 from ..paths import VideoPaths
 
@@ -156,6 +158,8 @@ def _extract_info(
     영구 실패(비공개/멤버 전용/삭제 등)는 재시도 없이 즉시 예외를 올려, 재생 불가 영상을
     빠르게 실패 처리한다("빠른 스킵" 요구).
     """
+    import yt_dlp
+
     for attempt in range(1, _DOWNLOAD_MAX_ATTEMPTS + 1):
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
@@ -217,6 +221,8 @@ def expand_source(url: str, limit: int | None, *, log=print) -> list[VideoEntry]
     항목이 실어 주는 ``availability`` 를 그대로 보존해, 재생 불가 영상(멤버 전용 등)을
     영상별 처리에서 다시 조회하지 않고 곧바로 스킵할 수 있게 한다.
     """
+    import yt_dlp
+
     from ..utils import is_channel_or_playlist_url
 
     if not is_channel_or_playlist_url(url):

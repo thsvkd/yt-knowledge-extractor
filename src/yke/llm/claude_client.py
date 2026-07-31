@@ -11,24 +11,36 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from functools import lru_cache
 
-_CLAUDE_BIN = shutil.which("claude")
 _TIMEOUT_SECONDS = 1200  # 대형 통합(6단계) 호출도 버틸 여유(20분)
+
+
+@lru_cache(maxsize=1)
+def _claude_bin() -> str | None:
+    """PATH 에서 찾은 `claude` CLI 경로(없으면 None).
+
+    ``shutil.which`` 는 PATH 의 모든 디렉터리를 훑는다(Windows 는 PATHEXT 조합까지). 모듈
+    import 시점에 하면 GUI 가 뜨기 전에 그 비용을 그대로 내므로, 처음 필요할 때 한 번만
+    조회하고 결과를 캐시한다.
+    """
+    return shutil.which("claude")
 
 
 def is_available() -> bool:
     """`claude` CLI 를 PATH 에서 찾을 수 있는지."""
-    return _CLAUDE_BIN is not None
+    return _claude_bin() is not None
 
 
 class ClaudeClient:
     def __init__(self) -> None:
-        if _CLAUDE_BIN is None:
+        binary = _claude_bin()
+        if binary is None:
             raise RuntimeError(
                 "'claude' CLI 를 찾을 수 없습니다. Claude Code"
                 "(https://claude.com/claude-code)를 설치하고 `claude login` 으로 로그인하세요."
             )
-        self._bin = _CLAUDE_BIN
+        self._bin = binary
 
     def complete(self, system: str, user: str, *, model: str) -> str:
         """단일 턴 completion. `claude -p` 를 호출해 응답 텍스트를 반환한다."""
