@@ -10,8 +10,9 @@ Velopack 설치/업데이트/제거 훅(``--veloapp-*``)은 여기서 처리하�
 아예 실행하지 않으므로, 훅과 함께 실행된 프로세스는 이 파일에 도달하지 못한다. 그래서
 훅은 네이티브 진입점에서 곧바로 처리한다(``scripts/flet_template.py`` 의 러너 패치 참고).
 덕분에 앱이 정상 실행될 때 velopack 네이티브 모듈(로드에만 0.5초 이상)을 시작 경로에서
-import 하지 않아도 되어 첫 화면이 그만큼 빨리 뜬다(업데이트 확인은 GUI 가 백그라운드
-스레드에서 한다).
+import 하지 않아도 되어 첫 화면이 그만큼 빨리 뜬다. 훅이 아닌 설치본 유지보수(오래된
+패키지 정리 등)는 GUI 가 창을 띄운 뒤 워커 스레드에서 처리한다
+(:func:`yke.velopack_update.run_startup_maintenance`).
 """
 
 from yke.gui import main

@@ -85,6 +85,23 @@ class TestPatchWindowsRunner(unittest.TestCase):
             flet_template.patch_windows_runner(self.patched, width=820, height=860)
 
 
+class TestCacheDirName(unittest.TestCase):
+    """패치를 고쳤는데 flet 이 옛 Flutter 프로젝트를 재사용하는 사고를 막는 불변식."""
+
+    def test_includes_patch_revision_and_window_size(self):
+        # flet 은 템플릿 '경로'만 해시하므로, 패치 리비전·창 크기가 경로에 없으면 패치를
+        # 고쳐도 build/flutter 가 재생성되지 않아 옛 main.cpp 로 빌드된다.
+        name = flet_template.cache_dir_name("0.85.3", width=820, height=860)
+        self.assertIn("0.85.3", name)
+        self.assertIn(f"r{flet_template._PATCH_REVISION}", name)
+        self.assertIn("820x860", name)
+
+    def test_differs_when_patch_or_size_changes(self):
+        base = flet_template.cache_dir_name("0.85.3", width=820, height=860)
+        self.assertNotEqual(base, flet_template.cache_dir_name("0.85.3", width=900, height=860))
+        self.assertNotEqual(base, flet_template.cache_dir_name("0.86.0", width=820, height=860))
+
+
 class TestWindowSize(unittest.TestCase):
     def test_reads_gui_constants(self):
         """네이티브 러너의 첫 창 크기는 gui.py 의 상수(SSOT)에서 온다."""

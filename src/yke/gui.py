@@ -838,17 +838,29 @@ class PipelineGUI:
         self._set_status_now("중단 요청됨 — 곧 멈춥니다…", ft.Colors.AMBER)
 
     def _refresh_cred_status(self) -> None:
-        """선택한 프로바이더의 자격증명 상태를 상태 텍스트에 반영한다."""
-        if self._current_provider() == "gemini":
+        """선택한 프로바이더의 자격증명 상태를 상태 텍스트에 반영한다.
+
+        워커 스레드에서 불린다(확인이 느리다 — google-genai 첫 import, keyring 조회).
+        확인하는 동안 사용자가 프로바이더를 바꿀 수 있으므로, 결과를 쓰기 직전에 선택이
+        그대로인지 다시 보고 바뀌었으면 버린다(늦게 끝난 옛 확인이 새 상태를 덮어써서
+        엉뚱한 안내가 남는 것을 막는다).
+        """
+        provider = self._current_provider()
+
+        def publish(message: str, color: str | None) -> None:
+            if self._current_provider() == provider:
+                self._set_cred_status(message, color)
+
+        if provider == "gemini":
             if not _genai_available():
-                self._set_cred_status(
+                publish(
                     "google-genai 패키지가 없습니다 — `uv sync` 로 설치하세요.",
                     self._muted_color,
                 )
             elif has_gemini_api_key():
-                self._set_cred_status("Gemini API 키 설정됨 ✓", ft.Colors.GREEN)
+                publish("Gemini API 키 설정됨 ✓", ft.Colors.GREEN)
             else:
-                self._set_cred_status(
+                publish(
                     "Gemini API 키가 필요합니다 — aistudio.google.com/apikey 에서 발급 후 "
                     "아래에 입력하고 '키 저장'을 누르세요.",
                     self._muted_color,
@@ -856,9 +868,9 @@ class PipelineGUI:
             return
         # provider == claude
         if _claude_cli_available():
-            self._set_cred_status("Claude CLI 감지됨 ✓", ft.Colors.GREEN)
+            publish("Claude CLI 감지됨 ✓", ft.Colors.GREEN)
         else:
-            self._set_cred_status(
+            publish(
                 "Claude CLI 를 찾을 수 없습니다 — '전체 (지식 문서화까지)' 단계나 자막 "
                 "보정에는 claude.com/claude-code 설치 + `claude login`, 또는 Gemini 사용이 필요합니다.",
                 self._muted_color,
@@ -1034,6 +1046,9 @@ class PipelineGUI:
 
     # -- 자체 업데이트(GitHub Releases) ----------------------------------
     def _auto_check_updates(self) -> None:
+        # 설치본 유지보수(오래된 패키지 정리 등)를 먼저 돌린다. velopack import 가 무거워
+        # 시작 경로에 둘 수 없어 이 워커 스레드의 첫 일감으로 붙였다.
+        velopack_update.run_startup_maintenance()
         self._check_updates(manual=False)
 
     def _on_update_click(self) -> None:

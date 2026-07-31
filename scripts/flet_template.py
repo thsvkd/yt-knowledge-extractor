@@ -17,11 +17,17 @@
    (훅에서 우리가 할 일은 없다. 자동 업데이트는 앱 안의 ``UpdateManager`` 가 따로 한다.)
 
 2) 처음 뜰 때 창 크기가 한 번 바뀐다
-   러너는 창을 1280x720 으로 만들어 **즉시 보여준 뒤**(``Win32Window::Create`` 가
-   ``ShowWindow`` 까지 한다) 파이썬이 붙고 나서야 실제 크기로 줄인다 → 다른 크기의 창이
-   떴다가 제자리를 찾는 깜빡임. flet 의 ``hide_window_on_start`` 는 Windows 에서는 이미
-   보여진 창을 숨겨 주지 않아(``window_manager`` 의 네이티브 구현이 no-op) 소용이 없다.
+   러너는 창을 1280x720 으로 만들고, Flutter 가 **첫 프레임을 그리는 순간** 그대로
+   보여준다(``flutter_window.cpp`` 의 ``SetNextFrameCallback`` → ``Show()``). 그 첫
+   프레임은 파이썬이 붙기 한참 전의 부팅 화면이라, 창은 1280x720 으로 먼저 보이고 파이썬이
+   붙고 나서야 앱 크기로 줄어든다 → 다른 크기의 창이 떴다가 제자리를 찾는 깜빡임.
    → 처음부터 앱의 기본 창 크기로 만들게 한다. 크기의 SSOT 는 ``src/yke/gui.py`` 다.
+
+   flet 의 ``hide_window_on_start`` 설정(같은 ``SetNextFrameCallback`` 에서 ``Show()`` 를
+   건너뛴다)으로 "파이썬이 준비될 때까지 창을 아예 안 보여주기"도 가능하지만 쓰지 않는다.
+   그 경우 창을 보여줄 책임이 파이썬으로 넘어가는데, 파이썬이 뜨다 실패하면 flet 이 대신
+   그리는 오류 화면까지 숨은 창 안에 갇혀 "실행해도 아무 일이 없는" 상태가 된다. 창을
+   처음부터 맞는 크기로 만드는 쪽은 그런 실패 모드가 없다.
 
 앵커 문자열이 정확히 한 번 나오지 않으면(= flet 이 템플릿을 바꿨으면) 조용히 넘어가지
 않고 빌드를 실패시킨다. 패치가 사라진 채 배포되면 위 증상이 그대로 돌아오기 때문이다.
@@ -47,7 +53,11 @@ _TEMPLATE_ROOT = "build"
 # 템플릿 안에서 패치할 파일(경로에 cookiecutter 변수명이 그대로 들어간다).
 _RUNNER_MAIN = Path("{{cookiecutter.out_dir}}") / "windows" / "runner" / "main.cpp"
 
-# 패치 내용이 바뀌면 이 값을 올린다 — 이미 풀어 둔 템플릿 캐시를 다시 만들게 하는 표식이다.
+# 패치 내용이 바뀌면 이 값을 올린다. 이 값은 **캐시 디렉터리 이름에 들어간다** — 그래야
+# 한다. flet build 는 템플릿의 내용이 아니라 경로/버전만 해시해 Flutter 프로젝트 재생성
+# 여부를 정하므로(build_base.create_flutter_project), 경로가 그대로면 패치를 고쳐도
+# build/flutter 를 재사용해 **옛 main.cpp 로 조용히 빌드된다**. 경로가 달라지면 flet 의
+# 해시도 달라져 반드시 다시 생성한다.
 _PATCH_REVISION = 1
 
 # -- 패치 정의 ---------------------------------------------------------------
@@ -116,6 +126,16 @@ def patch_windows_runner(text: str, *, width: int, height: int) -> str:
     return text
 
 
+def cache_dir_name(flet_version: str, *, width: int, height: int) -> str:
+    """패치된 템플릿을 캐시할 디렉터리 이름.
+
+    flet 버전뿐 아니라 **패치 리비전과 창 크기까지** 이름에 넣는다. flet 은 템플릿의 내용이
+    아니라 경로/버전만 해시해 Flutter 프로젝트 재생성 여부를 정하므로, 경로가 그대로면
+    패치를 고쳐도 옛 결과물로 조용히 빌드된다(위 :data:`_PATCH_REVISION` 주석 참고).
+    """
+    return f"{flet_version}-r{_PATCH_REVISION}-{width}x{height}"
+
+
 def _download(url: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     info(f"flet 빌드 템플릿 내려받는 중… {url}")
@@ -135,7 +155,7 @@ def prepare(flet_version: str) -> Path:
     """
     width, height = window_size()
     base = REPO_ROOT / "build" / "_flet_template"
-    root = base / flet_version
+    root = base / cache_dir_name(flet_version, width=width, height=height)
     template_dir = root / _TEMPLATE_ROOT
     stamp = root / ".yke-patch"
     key = f"{_PATCH_REVISION}|{width}x{height}"

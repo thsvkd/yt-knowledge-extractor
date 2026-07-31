@@ -13,6 +13,8 @@ Releases 의 ``releases.win.json`` + nupkg(델타 우선, 없으면 전체)로 �
 만드는 Flutter 러너가 명령행 인자를 "개발자 모드"로 해석해 파이썬을 실행조차 하지 않기
 때문에, 훅은 네이티브 진입점에서 처리한다(``scripts/flet_template.py`` 참고).
 
+- :func:`run_startup_maintenance` — 오래된 패키지 정리 등 설치본 유지보수. 무거우므로
+  창이 뜬 뒤 워커 스레드에서 부른다(GUI 의 업데이트 확인 스레드가 먼저 호출).
 - :func:`is_installed` — Velopack 설치 컨텍스트에서 도는지(업데이트 적용 가능 여부 가드).
 - :func:`check` / :func:`download_and_apply` — 업데이트 확인·적용(네트워크는 호출자가
   워커 스레드에서 돌린다).
@@ -20,10 +22,40 @@ Releases 의 ``releases.win.json`` + nupkg(델타 우선, 없으면 전체)로 �
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
+
+logger = logging.getLogger(__name__)
 
 # GitHub Releases 소스. 릴리스 에셋에 releases.win.json + *.nupkg 가 올라가 있어야 한다.
 REPO_URL = "https://github.com/thsvkd/yt-knowledge-extractor"
+
+
+def run_startup_maintenance() -> None:
+    """velopack ``App().run()`` — 설치본 유지보수. **워커 스레드에서** 호출한다.
+
+    설치/업데이트/제거 라이프사이클 훅은 네이티브 러너가 이미 처리하므로(모듈 docstring
+    참고) 여기서 걸리는 훅은 없다. 그래도 이 호출이 필요한 이유는 ``App().run()`` 이
+    다음 일도 같이 하기 때문이다.
+
+    - **packages 폴더의 오래된 nupkg 삭제.** velopack 에서 이 정리를 하는 곳은 여기뿐이다
+      (업데이트 적용 경로는 실패한 패키지만 지운다). 부르지 않으면 업데이트할 때마다 이전
+      전체 패키지가 그대로 쌓인다(이 앱은 전체 패키지가 100MB 단위다).
+    - 받아 두고 아직 적용하지 않은 업데이트가 있으면 적용 후 재시작.
+    - 현재 프로세스의 AppUserModelID 설정(작업 표시줄 그룹화).
+
+    velopack 은 네이티브 모듈이라 import 만으로 0.5초 이상 걸린다. 창이 뜨기 전에 부르면
+    첫 화면이 그만큼 늦어지므로 반드시 백그라운드에서 부른다(창은 어차피 이 호출 전에
+    떠 있었다 — Flutter 가 첫 프레임에서 창을 보여준 뒤에야 파이썬이 붙는다).
+    비설치/개발 실행이면 조용히 no-op 이며, 어떤 예외도 앱 동작을 막지 않는다.
+    """
+    try:
+        from velopack import App
+
+        App().run()
+    except Exception:  # noqa: BLE001 - 업데이트 계층 실패가 앱 동작을 막으면 안 된다.
+        logger.debug("velopack 시작 유지보수 건너뜀(미설치/개발 실행)", exc_info=True)
+
 
 _manager_cache = None
 
