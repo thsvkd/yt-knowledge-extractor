@@ -9,6 +9,7 @@
 - 환경 구성: `python scripts/setup.py` (base + vosk extra 포함. GPU STT 가속: `python scripts/setup.py --gpu`)
 - 앱 실행: `python scripts/run.py` (GUI) / `python scripts/run.py --cli [옵션]` (CLI, 뒤 인자는 `yke` 로 전달)
 - 빌드: `python scripts/build.py` → CPU flet 번들 + **Velopack 설치기**(`dist/velopack/`). GPU 는 온디맨드(`--gpu-runtime` 으로 cuBLAS 에셋 zip). 설치·자동업데이트는 Velopack(`src/yke/velopack_update.py`), GPU 온디맨드는 `src/yke/gpu_runtime.py`.
+- Windows 빌드는 flet 공식 빌드 템플릿을 패치해 쓴다(`scripts/flet_template.py`): 네이티브 러너 진입점에서 Velopack 훅(`--veloapp-*`)을 즉시 처리하고, 첫 창을 앱 크기로 만든다. 기준 문자열이 안 맞으면 빌드가 실패한다 — flet 버전을 올렸다면 거기부터 확인한다.
 - 배포: `python scripts/deploy.py` → 버전 확인(이전 릴리스와 같으면 중단) → 빌드 → `claude -p`
   로 릴리스 노트 생성(지침: `scripts/release_notes_guide.md`) → GitHub 릴리스 생성/업로드.
 - 테스트: `python scripts/test.py` (뒤 인자는 그대로 `pytest` 로 전달)

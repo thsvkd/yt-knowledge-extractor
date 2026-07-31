@@ -9,9 +9,10 @@ Releases 의 ``releases.win.json`` + nupkg(델타 우선, 없으면 전체)로 �
 개발 실행이나 설치 컨텍스트가 아닌 실행에서는 모든 함수가 안전하게 no-op / False 로
 떨어져 앱 기동을 막지 않는다.
 
-- :func:`run_startup_hooks` — 프로세스 진입 즉시(창이 뜨기 전) 반드시 호출한다. 설치/
-  업데이트/제거 시 Velopack 은 앱을 훅 인자(환경변수)와 함께 재실행하는데, 이 호출이 그걸
-  가로채 처리하고 필요하면 프로세스를 종료한다. 일반 실행이면 즉시 반환한다.
+설치/업데이트/제거 라이프사이클 훅(``--veloapp-*``)은 이 모듈이 다루지 않는다. flet 이
+만드는 Flutter 러너가 명령행 인자를 "개발자 모드"로 해석해 파이썬을 실행조차 하지 않기
+때문에, 훅은 네이티브 진입점에서 처리한다(``scripts/flet_template.py`` 참고).
+
 - :func:`is_installed` — Velopack 설치 컨텍스트에서 도는지(업데이트 적용 가능 여부 가드).
 - :func:`check` / :func:`download_and_apply` — 업데이트 확인·적용(네트워크는 호출자가
   워커 스레드에서 돌린다).
@@ -19,43 +20,25 @@ Releases 의 ``releases.win.json`` + nupkg(델타 우선, 없으면 전체)로 �
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
-
-logger = logging.getLogger(__name__)
 
 # GitHub Releases 소스. 릴리스 에셋에 releases.win.json + *.nupkg 가 올라가 있어야 한다.
 REPO_URL = "https://github.com/thsvkd/yt-knowledge-extractor"
-
-
-def _velopack():
-    """velopack 심볼을 지연 임포트한다(미설치/개발 실행에서 임포트 실패를 국소화)."""
-    from velopack import App, GithubSource, UpdateManager
-
-    return App, GithubSource, UpdateManager
-
-
-def run_startup_hooks() -> None:
-    """velopack ``App().run()`` — 진입점에서 가장 먼저 호출한다.
-
-    설치/업데이트/제거 라이프사이클에서 Velopack 이 앱을 훅과 함께 재실행하면 여기서
-    처리 후 종료한다(일반 실행은 즉시 반환). velopack 미설치/개발 실행이면 조용히 no-op.
-    어떤 예외도 앱 기동을 막지 않는다.
-    """
-    try:
-        App, _, _ = _velopack()
-        App().run()
-    except Exception:  # noqa: BLE001 - 업데이트 계층 실패가 앱 기동을 막으면 안 된다.
-        logger.debug("velopack 시작 훅 건너뜀(미설치/개발 실행)", exc_info=True)
-
 
 _manager_cache = None
 
 
 def _manager():
+    """``UpdateManager`` 를 만들어 캐시한다.
+
+    velopack 은 여기서 지연 임포트한다 — 네이티브 모듈이라 로드가 무거워(0.5초 이상) 앱
+    기동 경로에서 부르면 첫 화면이 그만큼 늦어진다. 호출부(GUI)가 워커 스레드에서만
+    쓰므로 시작 시간에는 영향을 주지 않는다.
+    """
     global _manager_cache
     if _manager_cache is None:
-        _, GithubSource, UpdateManager = _velopack()
+        from velopack import GithubSource, UpdateManager
+
         _manager_cache = UpdateManager(GithubSource(REPO_URL))
     return _manager_cache
 

@@ -139,11 +139,17 @@ CLI는 `data_dir`(캐시)와 `output_dir`(산출물)을 분리할 수 있고, GU
   `scripts/release_notes_guide.md`) 릴리스 노트 생성 → GitHub 릴리스 생성 + 에셋 업로드.
 - **설치 · 자체 업데이트**: [Velopack](https://velopack.io)(Squirrel 후속) 사용. 설치본은
   `%LocalAppData%\YtKnowledgeExtractor\current\` **고정 경로**(OneDrive 로 리다이렉트된 폴더 경합
-  회피)에 놓이고, GitHub Releases 의 `releases.win.json` + nupkg(**델타 우선**)로 갱신한다. 진입점
-  (`src/main.py`)에서 `velopack.App().run()` 으로 설치/업데이트 라이프사이클 훅을 처리하고, GUI
+  회피)에 놓이고, GitHub Releases 의 `releases.win.json` + nupkg(**델타 우선**)로 갱신한다. GUI
   (`src/yke/velopack_update.py` 래퍼)가 시작 시 자동 확인 + 수동 버튼으로 `UpdateManager` 를
   호출한다. 서명(YKE_SIGN_THUMBPRINT/PFX)은 Velopack 이 전 파일에 적용한다. (기존 커스텀 사이드카
   updater 는 Velopack 으로 대체됨.)
+- **설치/업데이트 라이프사이클 훅**(`--veloapp-*`)은 파이썬이 아니라 **네이티브 러너 진입점**에서
+  처리한다(`scripts/flet_template.py` 가 flet 빌드 템플릿의 `windows/runner/main.cpp` 를 패치).
+  flet 이 만드는 Flutter 러너는 명령행 인자가 하나라도 있으면 "개발자 모드"로 간주해 파이썬을
+  아예 실행하지 않으므로, `src/main.py` 에서 `velopack.App().run()` 을 부르는 방식은 동작하지
+  않았다 — 훅이 30초 타임아웃 후 강제 종료되어 설치기가 "설치가 부분적으로 성공했습니다" 경고를
+  띄웠다. 같은 패치가 첫 창을 처음부터 앱 크기(`gui.py` 의 `_WINDOW_WIDTH/_WINDOW_HEIGHT`)로
+  만들어, 1280x720 으로 떴다가 줄어드는 깜빡임도 없앤다.
 
 ## 8. 미해결 이슈 / 향후 과제
 

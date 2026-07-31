@@ -32,6 +32,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import flet_template
 from _common import REPO_ROOT, check, fail, info, require_uv, sync_version
 from sign import find_signtool, maybe_sign_bundle, velopack_sign_params
 
@@ -106,6 +107,23 @@ def write_windows_launcher(dst: Path) -> None:
     """문서 폴더 준비 실패(제어된 폴더 액세스 차단 등) 시 안내를 보여주는 실행 런처를 넣는다."""
     (dst / "prepare_storage.ps1").write_text(_LAUNCHER_PS1, encoding="utf-8")
     (dst / "실행.bat").write_text(_LAUNCHER_BAT, encoding="utf-8")
+
+
+def flet_version() -> str:
+    """빌드에 쓰이는 flet 버전. 패치용 빌드 템플릿을 같은 버전으로 받으려고 확인한다.
+
+    ``flet build`` 가 템플릿 태그로 쓰는 값(``flet.version.flet_version``)과 정확히 같은
+    값을 써야 하므로, pyproject 의 핀을 파싱하지 않고 동기화된 환경에서 직접 읽는다.
+    """
+    result = subprocess.run(
+        ["uv", "run", "--no-sync", "python", "-c",
+         "import flet.version as v; print(v.flet_version)"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    version = result.stdout.strip()
+    if result.returncode != 0 or not version:
+        fail(f"flet 버전을 확인하지 못했습니다: {result.stderr.strip() or result.stdout.strip()}")
+    return version
 
 
 def _target() -> str:
@@ -293,12 +311,16 @@ def main() -> int:
 
     info("의존성 동기화 (uv sync)")
     check(["uv", "sync"])
+
+    build_cmd = ["uv", "run", "--no-sync", "flet", "build", target,
+                 "--product", _PRODUCT, "--org", _ORG]
+    if target == "windows":
+        # Windows 러너 진입점을 패치한 템플릿으로 빌드한다 — Velopack 설치 훅 처리와
+        # 첫 창 크기(시작 시 크기가 바뀌는 깜빡임 제거). 자세한 이유는 flet_template 참고.
+        build_cmd += ["--template", str(flet_template.prepare(flet_version()))]
+
     info(f"flet build {target} (base)")
-    check(
-        ["uv", "run", "--no-sync", "flet", "build", target,
-         "--product", _PRODUCT, "--org", _ORG],
-        env=build_env,
-    )
+    check(build_cmd, env=build_env)
     dst = stash_output(target, "base")
     verify_artifact(dst, target)
     # 앱 exe 서명(YKE_SIGN_THUMBPRINT/YKE_SIGN_PFX 설정 시). 인증서 미지정이면 미서명.

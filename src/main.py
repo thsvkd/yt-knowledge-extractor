@@ -5,16 +5,15 @@
 개발 중 실행(``yke-gui``)은 :func:`yke.gui.main` 을 직접 진입점으로 쓰며, 이 파일은
 네이티브 빌드 전용 얇은 셔임이다.
 
-맨 먼저 Velopack 설치/업데이트 라이프사이클 훅을 처리한다. 설치/업데이트/제거 시
-Velopack 이 앱을 훅(환경변수)과 함께 재실행하는데, :func:`run_startup_hooks` 가 그걸
-가로채 처리하고 필요하면 프로세스를 종료한다. 무거운 flet(``yke.gui``) 임포트보다 앞에
-두어, 훅 실행 상황에서 불필요한 UI 로드를 피한다. (velopack 미설치/개발 실행이면 no-op)
+Velopack 설치/업데이트/제거 훅(``--veloapp-*``)은 여기서 처리하지 않는다 — 처리할 수가
+없다. flet 이 만드는 Flutter 러너는 명령행 인자가 있으면 "개발자 모드"로 간주해 파이썬을
+아예 실행하지 않으므로, 훅과 함께 실행된 프로세스는 이 파일에 도달하지 못한다. 그래서
+훅은 네이티브 진입점에서 곧바로 처리한다(``scripts/flet_template.py`` 의 러너 패치 참고).
+덕분에 앱이 정상 실행될 때 velopack 네이티브 모듈(로드에만 0.5초 이상)을 시작 경로에서
+import 하지 않아도 되어 첫 화면이 그만큼 빨리 뜬다(업데이트 확인은 GUI 가 백그라운드
+스레드에서 한다).
 """
 
-from yke.velopack_update import run_startup_hooks
-
-run_startup_hooks()
-
-from yke.gui import main  # noqa: E402 - Velopack 훅을 UI 로드보다 먼저 처리해야 한다.
+from yke.gui import main
 
 main()

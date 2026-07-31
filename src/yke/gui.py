@@ -42,6 +42,14 @@ _LEVEL_COLOR: dict[str, str] = {
     "warning": ft.Colors.AMBER,
     "error": ft.Colors.RED,
 }
+# 기본 창 크기(logical px). 네이티브 빌드의 Windows 러너도 창을 처음부터 이 크기로 만들도록
+# scripts/flet_template.py 가 이 두 상수를 직접 읽어 간다(= 여기가 SSOT). 값이 어긋나면
+# 앱이 뜨자마자 창 크기가 한 번 바뀌며 깜빡이므로, 이름/형식(`_WINDOW_WIDTH = 820`)을 바꿀
+# 때는 그 스크립트의 정규식도 함께 확인해야 한다.
+_WINDOW_WIDTH = 820
+_WINDOW_HEIGHT = 860
+# 최소 너비만 버튼 줄바꿈으로 높이가 늘지 않게 넉넉히 둔다(높이는 아래 _build 주석 참고).
+_WINDOW_MIN_WIDTH = 640
 # 로그 ListView 에 유지할 최대 줄 수(메모리 보호).
 _MAX_LOG_ROWS = 300
 # 로그 패널의 고정 높이(px). 루트가 스크롤되므로 창 높이에 의존하지 않고 이 안에서 자체 스크롤한다.
@@ -247,6 +255,9 @@ class PipelineGUI:
         # 다음 파이프라인 이벤트 때까지 밀렸다 — 그래서 경과 시간/진행 로그가 '뚝뚝' 끊겨
         # 보였다. 루프에서 주기적으로 깨어나면 모든 스레드가 쌓아 둔 갱신이 매 틱 flush 된다.
         self.page.run_task(self._ui_ticker)
+        # LLM 자격증명 상태 확인은 느리다(Gemini 면 google-genai import 0.6초 + keyring 의
+        # OS 자격증명 저장소 조회). 창이 뜨는 걸 막지 않도록 백그라운드로 돌린다.
+        self.page.run_thread(self._refresh_cred_status)
         # 시작 시 새 버전을 조용히 확인한다(네트워크/레포 미공개 실패는 무시).
         self.page.run_thread(self._auto_check_updates)
         # GPU 가속 가능 여부(NVIDIA 감지 + cuBLAS 유무)를 백그라운드에서 확인해 UI 를 채운다.
@@ -265,12 +276,14 @@ class PipelineGUI:
         # 변(20)보다 얇게 둔다. 콘텐츠 쪽 오른쪽 여백은 아래 Container 의 자체
         # padding(right=14)이 스크롤바와 겹치지 않게 이미 확보하고 있다.
         page.padding = ft.Padding(left=20, top=20, right=4, bottom=20)
-        page.window.width = 820
-        page.window.height = 860
+        # 네이티브 빌드에서는 러너가 이미 이 크기로 창을 만들어 두므로 여기서는 값이 바뀌지
+        # 않는다(깜빡임 없음). 개발 실행(`yke-gui`)에서는 여기가 실제로 크기를 정한다.
+        page.window.width = _WINDOW_WIDTH
+        page.window.height = _WINDOW_HEIGHT
         # 창 높이는 하드코딩한 최소값에 의존하지 않는다. 루트 Column 을 스크롤 가능하게 두어
         # 창이 콘텐츠보다 짧아지면 전체 페이지가 스크롤되므로, 요소가 세로로 압축("짜부")되지
-        # 않는다. 최소 너비만 버튼 줄바꿈으로 높이가 늘지 않게 넉넉히 둔다.
-        page.window.min_width = 640
+        # 않는다.
+        page.window.min_width = _WINDOW_MIN_WIDTH
         page.on_close = self._on_close
 
         cfg = self.base_cfg
@@ -456,7 +469,9 @@ class PipelineGUI:
 
         # LLM 자격증명 상태 텍스트 — 선택한 프로바이더에 맞춰 갱신된다(_refresh_cred_status):
         # Claude 는 CLI 감지 여부를, Gemini 는 SDK 설치 + API 키 설정 여부를 보여준다.
-        self.cred_status = ft.Text(size=12, color=_muted_color)
+        # 실제 확인은 느려서(google-genai import 0.6초, keyring 백엔드 조회) 창이 뜬 뒤
+        # 백그라운드에서 채운다 — 그때까지 보일 문구를 초기값으로 둔다.
+        self.cred_status = ft.Text("자격증명 확인 중…", size=12, color=_muted_color)
 
         # 자체 업데이트: 확인 버튼 + 상태. 새 버전이 있으면 같은 버튼이 '업데이트 후 재시작'으로 바뀐다.
         self.update_btn = ft.Button(
@@ -647,7 +662,6 @@ class PipelineGUI:
             )
         )
         self._apply_llm_enabled()
-        self._refresh_cred_status()
         self._reset_phase_chips()
         self._refresh_channel_options()
 
@@ -865,7 +879,9 @@ class PipelineGUI:
         self._safe_update(self.gemini_row)
         self._safe_update(self.gemini_refresh_btn)
         self._apply_llm_enabled()
-        self._refresh_cred_status()
+        # 자격증명 확인은 느릴 수 있어(Gemini 면 google-genai 첫 import) UI 를 멈추지 않게
+        # 백그라운드로 돌린다.
+        self.page.run_thread(self._refresh_cred_status)
         self._persist_llm_settings()
         # Gemini 로 바꿨고 키가 있으면 실제 사용 가능한 최신 모델을 백그라운드로 불러온다.
         if is_gemini:
