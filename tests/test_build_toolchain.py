@@ -128,8 +128,15 @@ class PruneExternalSymlinksTest(unittest.TestCase):
         (self.bundle / "Contents" / "MacOS" / "app").write_text("bin")
 
     def _links(self) -> set[str]:
+        """남아 있는 심링크의 번들 기준 상대 경로(POSIX 표기).
+
+        구분자를 ``str()`` 로 OS 에 맡기면 Windows 에서 ``a\\b`` 가 되어, 아래 어서션이
+        쓰는 ``a/b`` 와 절대 일치하지 않는다. ``assertIn`` 은 그래서 실패하고, 더 나쁜 건
+        ``assertNotIn`` 이 **링크가 남아 있어도 항상 통과**해 검증이 조용히 사라진다는
+        것이다(실제로 겪음). 대상 코드는 macOS 전용이지만 테스트는 모든 OS 에서 돈다.
+        """
         return {
-            str(p.relative_to(self.bundle))
+            p.relative_to(self.bundle).as_posix()
             for p in self.bundle.rglob("*")
             if p.is_symlink()
         }
