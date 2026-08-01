@@ -438,3 +438,50 @@ class TestCheckHeadPushed(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLockfileVersionGate(unittest.TestCase):
+    """uv.lock 이 pyproject 버전을 따라왔는지.
+
+    uv.lock 은 자기 프로젝트의 버전도 기록한다. pyproject 만 올리고 커밋하면 락파일이 한 버전
+    뒤처지고, 그 상태로 배포하면 build.py 의 `uv sync` 가 **배포 도중에** 락파일을 고쳐
+    워킹 트리를 더럽힌다. 그 시점은 워킹 트리 검사를 이미 통과한 뒤라 이번 배포는 나가고,
+    다음 배포가 영문 모를 "커밋되지 않은 변경"으로 막힌다(Windows 에서 실제로 겪었다).
+    """
+
+    LOCK = """
+version = 1
+
+[[package]]
+name = "some-dependency"
+version = "9.9.9"
+
+[[package]]
+name = "yt-knowledge-extractor"
+version = "0.1.5"
+source = { editable = "." }
+"""
+
+    def test_reads_own_version_not_a_dependency(self) -> None:
+        self.assertEqual(deploy.lockfile_version(self.LOCK, "yt-knowledge-extractor"), "0.1.5")
+
+    def test_missing_package_returns_none(self) -> None:
+        self.assertIsNone(deploy.lockfile_version(self.LOCK, "not-in-lock"))
+
+    def test_broken_lockfile_returns_none(self) -> None:
+        self.assertIsNone(deploy.lockfile_version("this is not toml {{{", "x"))
+
+    def test_matching_version_passes(self) -> None:
+        self.assertIsNone(deploy.check_lockfile_version("0.1.5", "0.1.5", force=False))
+
+    def test_stale_lockfile_is_blocked(self) -> None:
+        error = deploy.check_lockfile_version("0.1.4", "0.1.5", force=False)
+        self.assertIsNotNone(error)
+        self.assertIn("uv lock", error)
+
+    def test_unreadable_lockfile_is_blocked(self) -> None:
+        self.assertIsNotNone(deploy.check_lockfile_version(None, "0.1.5", force=False))
+
+    def test_force_bypasses(self) -> None:
+        self.assertIsNone(deploy.check_lockfile_version("0.1.4", "0.1.5", force=True))
+        self.assertIsNone(deploy.check_lockfile_version(None, "0.1.5", force=True))

@@ -81,7 +81,10 @@ def install_pre_commit_hook() -> None:
     if hook.exists() and hook.read_text(encoding="utf-8") != _PRE_COMMIT_HOOK:
         info(f"pre-commit 훅이 이미 있어 그대로 둡니다: {hook}")
         return
-    hook.write_text(_PRE_COMMIT_HOOK, encoding="utf-8")
+    # newline="\n" 이 없으면 Windows 에서 기본 개행 변환이 걸려 CRLF 로 기록된다. 그러면
+    # 셔뱅이 `#!/usr/bin/env bash\r` 이 되어 sh 가 "bash\r: not found" 로 죽는다(git 은
+    # Windows 에서도 번들 sh 로 훅을 실행하므로 이 경로를 반드시 탄다).
+    hook.write_text(_PRE_COMMIT_HOOK, encoding="utf-8", newline="\n")
     hook.chmod(hook.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     info(f"pre-commit 훅 설치: {hook}")
 
