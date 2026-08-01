@@ -184,6 +184,52 @@ CLI 없이 전사 단계만 먼저 실행해 결과를 확인한 뒤, 전체 위
 
 ---
 
+## 완전히 제거하기
+
+앱을 지워도 설정·캐시는 남습니다. 이는 두 OS 모두에서 **의도된 동작**입니다(다시 설치하면 설정이 그대로 복원됩니다). 흔적까지 모두 지우려면 아래를 참고하십시오.
+
+**저장한 Gemini API 키는 평문 파일이 아니라 OS 자격증명 저장소**(macOS 키체인 / Windows 자격 증명 관리자)에 보관됩니다. 앱을 지워도 디스크에 평문 키가 남지 않습니다.
+
+### Windows
+
+1. **설정 → 앱 → 설치된 앱**에서 "YouTube Knowledge Extractor" 제거.
+   - 제거 시 자격 증명 관리자의 API 키 항목은 **자동으로 삭제**됩니다.
+2. 남는 항목을 지우려면:
+
+| 항목 | 경로 |
+| --- | --- |
+| 설정·기동 로그 | `%LOCALAPPDATA%\thsvkd\YtKnowledgeExtractor\` |
+| GPU 가속 런타임(받았다면, ~900MB) | 위 폴더의 `gpu-runtime\` |
+| flet 앱 저장소 | `<문서>\flet\yt-knowledge-extractor\` |
+| 예전 버전(v0.1.4 이하)의 설정 | `%LOCALAPPDATA%\YtKnowledgeExtractor\` |
+
+> v0.1.5 미만에서 제거했다면 자격 증명 관리자에 항목이 남아 있을 수 있습니다. **제어판 → 사용자 계정 → 자격 증명 관리자 → Windows 자격 증명**에서 `yt-knowledge-extractor` 를 찾아 제거하십시오.
+
+### macOS
+
+1. **응용 프로그램** 폴더의 "YouTube Knowledge Extractor"를 휴지통으로 옮깁니다(macOS에서는 이것이 제거입니다).
+2. macOS에는 제거 훅이 없어 **키체인 항목이 남습니다.** 지우려면 **키체인 접근.app**에서 `yt-knowledge-extractor` 를 찾아 삭제하거나, 터미널에서:
+
+```bash
+security delete-generic-password -s yt-knowledge-extractor
+```
+
+3. 남는 폴더:
+
+| 항목 | 경로 |
+| --- | --- |
+| 설정·기동 로그 | `~/Library/Application Support/YtKnowledgeExtractor/` |
+| flet 앱 저장소 | `~/Library/Application Support/com.thsvkd.yt-knowledge-extractor/` |
+
+4. 설치 영수증이 남았을 수 있습니다. 확인 후 지웁니다:
+
+```bash
+pkgutil --pkgs | grep -i knowledge     # 있으면 그 ID로
+pkgutil --forget <위에서 나온 ID>
+```
+
+---
+
 ## 자주 묻는 질문
 
 <details>
@@ -196,6 +242,24 @@ CLI 없이 전사 단계만 먼저 실행해 결과를 확인한 뒤, 전체 위
 
 **GPU 가속은 NVIDIA GPU + Windows 에서만 제공됩니다.** macOS는 CPU로 동작하며, 앱에
 GPU 관련 UI(고급 옵션의 "GPU 가속" 항목)가 아예 표시되지 않습니다.
+
+</details>
+
+<details>
+<summary><b>macOS에서 업데이트할 때마다 "키체인 접근을 허용하시겠습니까"를 묻습니다.</b></summary>
+
+<br>
+
+**정상이며, 허용을 누르면 그대로 동작합니다.** 다만 업데이트마다 반복될 수 있습니다.
+
+macOS 키체인은 저장된 항목에 접근할 수 있는 앱을 **코드 서명 신원**으로 식별합니다. 이 앱은
+Apple 개발자 인증서 없이 **ad-hoc 서명**으로 배포되는데, ad-hoc 서명의 신원은 빌드할 때마다
+바뀝니다(실측: v0.1.4 `beaeb491…` → v0.1.5 `aaad84fc…`). 그래서 키체인 입장에서는 업데이트된
+앱이 **다른 앱**으로 보여, 저장해 둔 Gemini API 키를 읽으려 할 때 다시 확인을 요구합니다.
+
+- **"항상 허용"** 을 선택하면 그 버전에서는 다시 묻지 않습니다(다음 업데이트에서 또 물을 수 있습니다).
+- 근본 해결은 Apple Developer ID 인증서로 정식 서명하는 것이며, 현재 범위 밖입니다.
+- 번거로우면 API 키 대신 환경변수 `GEMINI_API_KEY` 를 쓰는 방법도 있습니다(키체인을 거치지 않습니다).
 
 </details>
 

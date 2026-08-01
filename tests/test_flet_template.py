@@ -195,5 +195,59 @@ class TestWindowSize(unittest.TestCase):
         )
 
 
+class TestUninstallCredentialCleanup(unittest.TestCase):
+    """제거 훅에서만 자격 증명을 지우는지.
+
+    파이썬으로는 이 훅을 처리할 수 없다 — flet 의 Dart 진입점이 인자를 "개발자 모드"로
+    해석해 파이썬을 아예 실행하지 않는다. 그래서 네이티브 코드로 지우는데, 잘못 짜면
+    두 방향으로 조용히 틀린다.
+      - 제거 훅에서 안 지우면: 앱을 지워도 API 키가 자격 증명 관리자에 영구히 남는다.
+      - 설치/업데이트 훅에서 지우면: 업데이트할 때마다 사용자가 로그아웃된다.
+    둘 다 실기로 제거해 보기 전엔 드러나지 않으므로 여기서 고정한다.
+    """
+
+    def _patched(self) -> str:
+        return flet_template.patch_windows_runner(
+            _TEMPLATE_MAIN_CPP, width=820, height=860, targets=["svc", "acct@svc"]
+        )
+
+    def test_deletes_only_inside_uninstall_branch(self) -> None:
+        patched = self._patched()
+        uninstall_at = patched.index('L"--veloapp-uninstall"')
+        for target in ('L"svc"', 'L"acct@svc"'):
+            self.assertIn(target, patched)
+            self.assertGreater(
+                patched.index(target), uninstall_at,
+                "CredDeleteW 가 uninstall 분기보다 앞에 있으면 모든 훅에서 실행된다",
+            )
+
+    def test_hook_still_exits_success(self) -> None:
+        """항목이 없어도 성공 종료해야 한다 — 아니면 설치기가 '부분 성공' 경고를 띄운다."""
+        self.assertIn("return EXIT_SUCCESS;", self._patched())
+
+    def test_declares_wincred(self) -> None:
+        patched = self._patched()
+        self.assertIn("#include <wincred.h>", patched)
+        self.assertIn('#pragma comment(lib, "Advapi32.lib")', patched)
+
+    def test_targets_come_from_credentials_module(self) -> None:
+        """이름을 하드코딩하면 서비스명이 바뀌었을 때 엉뚱한 항목을 지우려다 조용히 실패한다."""
+        from yke.llm import credentials
+
+        self.assertEqual(
+            flet_template.credential_targets(),
+            [
+                credentials._SERVICE,
+                f"{credentials._GEMINI_ACCOUNT}@{credentials._SERVICE}",
+            ],
+        )
+
+    def test_cache_dir_changes_with_targets(self) -> None:
+        """항목 이름이 바뀌면 캐시 경로도 바뀌어야 옛 훅이 재사용되지 않는다."""
+        a = flet_template.cache_dir_name("0.85.3", width=820, height=860, targets=["svc"])
+        b = flet_template.cache_dir_name("0.85.3", width=820, height=860, targets=["other"])
+        self.assertNotEqual(a, b)
+
+
 if __name__ == "__main__":
     unittest.main()

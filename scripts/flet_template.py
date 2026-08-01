@@ -49,6 +49,7 @@ Velopack 의 Windows 설치 경로에서만 만들어지고(Rust/C# 의 fast-cal
 
 from __future__ import annotations
 
+import hashlib
 import re
 import shutil
 import urllib.error
@@ -78,26 +79,81 @@ _RUNNER_XIB = Path("{{cookiecutter.out_dir}}") / "macos" / "Runner" / "Base.lpro
 # r2: macOS 러너(MainMenu.xib) 첫 창 크기 패치를 추가했다. 올리지 않으면 기존 캐시
 # ``build/_flet_template/<flet>-r1-<W>x<H>`` 와 그 ``.yke-patch`` 스탬프가 그대로 맞아
 # 재사용돼, macOS 패치가 조용히 빠진 채 빌드된다.
-_PATCH_REVISION = 2
+# r3: Windows 제거 훅에서 자격 증명 관리자 항목을 지우도록 main.cpp 패치를 확장했다.
+_PATCH_REVISION = 3
 
 # -- 패치 정의 ---------------------------------------------------------------
 # 주석을 영어로 쓰는 이유: MSVC 는 BOM 없는 UTF-8 소스의 비ASCII 문자에 C4819 경고를 낸다.
 _INCLUDE_ANCHOR = "#include <windows.h>\n"
-_INCLUDE_PATCH = "#include <windows.h>\n#include <wchar.h>\n"
+# wincred.h: CredDeleteW(제거 훅). Advapi32 는 pragma 로 링크한다 — 템플릿의 CMake 를
+# 건드리지 않고 MSVC 만으로 끝내려는 것이다(CMake 를 고치면 패치 표면이 두 배가 된다).
+_INCLUDE_PATCH = (
+    "#include <windows.h>\n"
+    "#include <wchar.h>\n"
+    "#include <wincred.h>\n"
+    '#pragma comment(lib, "Advapi32.lib")\n'
+)
 
 _HOOK_ANCHOR = "_In_ wchar_t *command_line, _In_ int show_command) {\n"
-_HOOK_PATCH = _HOOK_ANCHOR + """\
+# 훅 처리 본문. {targets} 자리에 지울 자격 증명 항목들이 채워진다(_hook_patch 참고).
+_HOOK_PATCH_TEMPLATE = """\
   // [yke] Velopack lifecycle hooks (--veloapp-install/-updated/-obsolete/
   // -uninstall). The installer runs this exe with one of those arguments and
   // waits up to 30s for it to exit; otherwise it kills it and warns the user
   // that the installation only partially succeeded. Flet's Dart entrypoint
   // treats any command line argument as "developer mode" and never starts
-  // Python, so the hook can not be handled on the Python side at all. There is
-  // nothing to do for these hooks, so exit before the Flutter engine starts.
+  // Python, so the hook can not be handled on the Python side at all -- that is
+  // why the uninstall cleanup below is written in native code.
   if (command_line != nullptr && ::wcsstr(command_line, L"--veloapp-") != nullptr) {
+    // Only on uninstall. Doing this for -install/-updated/-obsolete would wipe
+    // the saved API key on every update, silently logging the user out.
+    if (::wcsstr(command_line, L"--veloapp-uninstall") != nullptr) {
+      // keyring stores the secret under the service name, and may keep an older
+      // copy under the compound "<account>@<service>" target. Delete both.
+      // Failures are ignored on purpose: the hook must exit successfully even
+      // when nothing is stored, otherwise the installer reports that the
+      // uninstall only partially succeeded.
+{targets}
+    }
     return EXIT_SUCCESS;
   }
 """
+
+_CRED_DELETE_LINE = '      ::CredDeleteW(L"{target}", CRED_TYPE_GENERIC, 0);'
+
+_SERVICE_RE = re.compile(r'^_SERVICE\s*=\s*"([^"]+)"', re.MULTILINE)
+_ACCOUNT_RE = re.compile(r'^_GEMINI_ACCOUNT\s*=\s*"([^"]+)"', re.MULTILINE)
+_CREDENTIALS_PATH = REPO_ROOT / "src" / "yke" / "llm" / "credentials.py"
+
+
+def credential_targets() -> list[str]:
+    """제거 훅에서 지울 Windows 자격 증명 관리자 항목 이름.
+
+    이름을 여기에 하드코딩하지 않고 ``credentials.py`` 에서 읽는 이유는, 틀린 이름을 지우면
+    **아무 일도 일어나지 않은 채 조용히 통과**하기 때문이다(CredDeleteW 는 없는 항목에
+    실패만 돌려주고 우리는 그것을 무시한다). 서비스명이 바뀌면 여기서 빌드가 깨지는 편이
+    낫다 — 창 크기를 gui.py 에서 읽는 것과 같은 이유다.
+
+    keyring 의 Windows 백엔드(``WinVaultKeyring``)는 값을 서비스명 target 에 저장하고,
+    같은 target 에 다른 계정의 값이 이미 있으면 그것을 ``<account>@<service>`` 로 옮긴다.
+    그래서 두 이름을 모두 지운다.
+    """
+    text = _CREDENTIALS_PATH.read_text(encoding="utf-8")
+    service = _SERVICE_RE.search(text)
+    account = _ACCOUNT_RE.search(text)
+    if not service or not account:
+        fail(f"{_CREDENTIALS_PATH} 에서 _SERVICE/_GEMINI_ACCOUNT 를 찾지 못했습니다.")
+    return [service.group(1), f"{account.group(1)}@{service.group(1)}"]
+
+
+def _hook_patch(targets: list[str]) -> str:
+    """훅 처리 본문(앵커 포함)을 만든다.
+
+    ``str.format`` 이 아니라 단순 치환을 쓴다 — 본문이 C++ 코드라 중괄호가 잔뜩 들어 있고,
+    format 은 그것을 치환자로 오해해 ``KeyError`` 를 낸다(실제로 겪음).
+    """
+    lines = "\n".join(_CRED_DELETE_LINE.replace("{target}", t) for t in targets)
+    return _HOOK_ANCHOR + _HOOK_PATCH_TEMPLATE.replace("{targets}", lines)
 
 _SIZE_ANCHOR = "  Win32Window::Size size(1280, 720);"
 _SIZE_PATCH = "  Win32Window::Size size({width}, {height});"
@@ -142,14 +198,21 @@ def _replace_once(text: str, anchor: str, replacement: str, what: str) -> str:
     return text.replace(anchor, replacement)
 
 
-def patch_windows_runner(text: str, *, width: int, height: int) -> str:
-    """Windows 러너 진입점(``main.cpp``) 소스에 두 패치를 적용한 결과를 돌려준다.
+def patch_windows_runner(
+    text: str, *, width: int, height: int, targets: list[str] | None = None
+) -> str:
+    """Windows 러너 진입점(``main.cpp``) 소스에 세 패치를 적용한 결과를 돌려준다.
+
+    Args:
+        targets: 제거 훅에서 지울 자격 증명 항목 이름. 생략하면 :func:`credential_targets`.
 
     Raises:
         ValueError: 기준 문자열이 정확히 한 번 나오지 않을 때(템플릿 구조 변경).
     """
-    text = _replace_once(text, _INCLUDE_ANCHOR, _INCLUDE_PATCH, "wchar.h 포함")
-    text = _replace_once(text, _HOOK_ANCHOR, _HOOK_PATCH, "Velopack 훅 조기 종료")
+    if targets is None:
+        targets = credential_targets()
+    text = _replace_once(text, _INCLUDE_ANCHOR, _INCLUDE_PATCH, "windows.h 포함부")
+    text = _replace_once(text, _HOOK_ANCHOR, _hook_patch(targets), "Velopack 훅 처리")
     text = _replace_once(
         text, _SIZE_ANCHOR, _SIZE_PATCH.format(width=width, height=height), "기본 창 크기"
     )
@@ -179,14 +242,23 @@ def patch_macos_runner(text: str, *, width: int, height: int) -> str:
     return text
 
 
-def cache_dir_name(flet_version: str, *, width: int, height: int) -> str:
+def cache_dir_name(
+    flet_version: str, *, width: int, height: int, targets: list[str] | None = None
+) -> str:
     """패치된 템플릿을 캐시할 디렉터리 이름.
 
-    flet 버전뿐 아니라 **패치 리비전과 창 크기까지** 이름에 넣는다. flet 은 템플릿의 내용이
-    아니라 경로/버전만 해시해 Flutter 프로젝트 재생성 여부를 정하므로, 경로가 그대로면
-    패치를 고쳐도 옛 결과물로 조용히 빌드된다(위 :data:`_PATCH_REVISION` 주석 참고).
+    flet 버전뿐 아니라 **패치 리비전·창 크기·자격 증명 항목 이름까지** 이름에 넣는다. flet 은
+    템플릿의 내용이 아니라 경로/버전만 해시해 Flutter 프로젝트 재생성 여부를 정하므로, 경로가
+    그대로면 패치를 고쳐도 옛 결과물로 조용히 빌드된다(위 :data:`_PATCH_REVISION` 주석 참고).
+
+    항목 이름까지 넣는 이유: ``credentials.py`` 의 서비스명을 바꾸면 main.cpp 에 박히는 값이
+    달라지는데, 리비전을 올리는 걸 잊으면 **옛 이름을 지우는 제거 훅이 그대로 배포된다**.
+    그건 아무것도 지우지 않고 조용히 성공하므로 실기로 확인하기 전엔 드러나지 않는다.
     """
-    return f"{flet_version}-r{_PATCH_REVISION}-{width}x{height}"
+    if targets is None:
+        targets = credential_targets()
+    digest = hashlib.sha256("|".join(targets).encode("utf-8")).hexdigest()[:8]
+    return f"{flet_version}-r{_PATCH_REVISION}-{width}x{height}-{digest}"
 
 
 def _download(url: str, dest: Path) -> None:
@@ -207,11 +279,12 @@ def prepare(flet_version: str) -> Path:
     git 무시)에 flet 버전별로 캐시되며, 패치 내용이나 창 크기가 바뀌면 다시 만든다.
     """
     width, height = window_size()
+    targets = credential_targets()
     base = REPO_ROOT / "build" / "_flet_template"
-    root = base / cache_dir_name(flet_version, width=width, height=height)
+    root = base / cache_dir_name(flet_version, width=width, height=height, targets=targets)
     template_dir = root / _TEMPLATE_ROOT
     stamp = root / ".yke-patch"
-    key = f"{_PATCH_REVISION}|{width}x{height}"
+    key = f"{_PATCH_REVISION}|{width}x{height}|{'|'.join(targets)}"
 
     if template_dir.is_dir() and stamp.is_file() and stamp.read_text(encoding="utf-8").strip() == key:
         info(f"패치된 flet 템플릿 재사용: {template_dir}")
@@ -243,7 +316,7 @@ def prepare(flet_version: str) -> Path:
         fail(f"템플릿에서 macOS 러너 창 정의를 찾지 못했습니다: {xib}")
     try:
         patched_main = patch_windows_runner(
-            main_cpp.read_text(encoding="utf-8"), width=width, height=height
+            main_cpp.read_text(encoding="utf-8"), width=width, height=height, targets=targets
         )
         patched_xib = patch_macos_runner(
             xib.read_text(encoding="utf-8"), width=width, height=height
