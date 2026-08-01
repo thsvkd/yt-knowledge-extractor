@@ -25,8 +25,17 @@ CPU / GPU 차이:
 from __future__ import annotations
 
 import argparse
+import stat
+import subprocess
 
-from _common import check, info, require_uv, sync_version
+from _common import REPO_ROOT, check, info, require_uv, sync_version
+
+# 커밋 전에 scripts/test.py(린트·포맷·테스트)를 돌리는 훅. 훅 자체는 얇게 두고 검사 내용은
+# 전부 test.py 에 둔다 — 검사를 고칠 때 각자의 .git/hooks 를 다시 설치할 필요가 없다.
+_PRE_COMMIT_HOOK = """#!/usr/bin/env bash
+set -euo pipefail
+exec uv run python "$(git rev-parse --show-toplevel)/scripts/test.py"
+"""
 
 
 def sync_dependencies(gpu: bool) -> None:
@@ -48,6 +57,35 @@ def verify_import() -> None:
     check(["uv", "run", "--no-sync", "python", "-c", "import yke"])
 
 
+def install_pre_commit_hook() -> None:
+    """커밋 전 검사 훅을 ``.git/hooks/pre-commit`` 에 설치한다.
+
+    훅은 git 으로 공유되지 않으므로(``.git/`` 는 추적 대상이 아니다) 클론마다 한 번은 깔아야
+    한다. 그 한 번을 사람이 기억하게 두면 결국 누군가의 로컬에서만 게이트가 도는데, 그러면
+    게이트가 없는 것과 같다. 그래서 환경 구성에 붙였다.
+
+    이미 다른 내용의 훅이 있으면 덮어쓰지 않는다 — 각자 쓰던 훅을 말없이 날리면 안 된다.
+    git 저장소가 아니면 조용히 건너뛴다(소스 tarball 로 받은 경우).
+    """
+    proc = subprocess.run(
+        ["git", "rev-parse", "--git-dir"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return
+    hooks_dir = (REPO_ROOT / proc.stdout.strip()).resolve() / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    hook = hooks_dir / "pre-commit"
+    if hook.exists() and hook.read_text(encoding="utf-8") != _PRE_COMMIT_HOOK:
+        info(f"pre-commit 훅이 이미 있어 그대로 둡니다: {hook}")
+        return
+    hook.write_text(_PRE_COMMIT_HOOK, encoding="utf-8")
+    hook.chmod(hook.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    info(f"pre-commit 훅 설치: {hook}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -61,6 +99,7 @@ def main() -> int:
     sync_dependencies(args.gpu)
     sync_version()  # pyproject.toml(SSOT) 버전을 src/yke/__init__.py 에 반영.
     verify_import()
+    install_pre_commit_hook()
 
     info("환경 구성 완료. `python scripts/run.py` 로 앱을 실행하세요.")
     return 0
