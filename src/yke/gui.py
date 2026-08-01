@@ -23,7 +23,7 @@ from pathlib import Path
 
 import flet as ft
 
-from . import __version__, gpu_runtime, velopack_update
+from . import __version__, gpu_runtime, startup_log, velopack_update
 from .appdirs import user_data_dir
 from .config import Config, LLMConfig, load_config
 from .llm.claude_client import is_available as _claude_cli_available
@@ -77,6 +77,42 @@ _DEVICE_CHOICES = (
     if _GPU_SUPPORTED
     else [("자동", "auto"), ("사용 안함", "cpu")]
 )
+# -- 업데이트 진행률 -----------------------------------------------------------
+# Velopack 이 실제로 주는 진행률은 셋뿐이다(velopack 1.2.0 의 rust manager.rs 확인):
+# 델타를 하나씩 받을 때마다 (i/N)*70, 패치 시작 직전에 70, 패치 성공 후 100. 델타 파일
+# 자체의 바이트 진행률은 `download_release_entry(delta, .., None)` 로 **꺼져 있어** 아예
+# 오지 않는다. 그래서 델타가 1개인 보통의 업데이트(v0.1.3→v0.1.4)에서는 0 → 70 →
+# (전체 패키지를 재구성하는 긴 무음 구간) → 100 이 전부다. 사용자 눈에는 "70%에서 멈춘 뒤
+# 갑자기 업데이트 창이 뜬다"로 보인다(실제로 받은 피드백).
+#
+# 그래서 체크포인트를 **하한**으로만 쓰고, 표시값은 시간 기반으로 천장을 향해 지수 감쇠하며
+# 계속 올라가게 한다. 뒤로 가지 않고, 체크포인트가 표시값보다 앞서면 그 값으로 점프한다.
+_UPDATE_TICK_SECONDS = 0.12
+# 구간별 시간상수(초). 클수록 천천히 붙는다. 패치 구간이 가장 오래 걸리므로 크게 잡는다.
+_UPDATE_EASE_DOWNLOAD = 8.0
+_UPDATE_EASE_PATCH = 25.0
+_UPDATE_EASE_FINALIZE = 3.0
+# 구간별 천장. **실제 완료 전에는 100 을 절대 표시하지 않는다** — 100 을 띄워 놓고 몇 초 더
+# 도는 것은 지금의 "70%에서 멈춤"과 똑같은 인상을 준다.
+_UPDATE_CEIL_DOWNLOAD = 70.0
+_UPDATE_CEIL_PATCH = 99.0
+_UPDATE_CEIL_FINALIZE = 99.9
+# 100% 를 눈으로 확인할 시간. 이 뒤 바로 apply_and_restart 가 창을 닫고 Velopack 업데이트
+# 창이 뜬다(요구사항: 100 이 되는 순간 창이 꺼진다).
+_UPDATE_DONE_LINGER = 0.35
+
+
+def _ease_progress(shown: float, ceiling: float, ease_seconds: float, tick: float) -> float:
+    """``ceiling`` 을 향해 지수 감쇠로 다가가는 다음 표시값.
+
+    절대 ``ceiling`` 을 넘지 않고, 뒤로도 가지 않는다(``shown <= ceiling`` 가정).
+    스레드 없이 검증할 수 있도록 순수 함수로 떼어 뒀다.
+    """
+    if ease_seconds <= 0:
+        return ceiling
+    return shown + (ceiling - shown) * min(1.0, tick / ease_seconds)
+
+
 # 실행 단계 선택지: (표시명, run_pipeline stage 값). 기본값은 '스크립트 추출까지'.
 _STAGE_CHOICES = [
     ("전체 (지식 문서화까지)", "all"),
@@ -261,8 +297,10 @@ class PipelineGUI:
         self._last_rendered_phase: str | None = None
         self._last_rendered_substep: str | None = None
         self.base_cfg = _load_base_config(_DEFAULT_CONFIG_PATH)
+        startup_log.step("설정 로드 완료")
         self._gui_settings = _load_gui_settings()
         self._build()
+        startup_log.step("위젯 구성(_build) 완료")
         # 렌더 하트비트를 flet 이벤트 루프의 async task 로 돌린다. 원시 스레드에서 .update()
         # 를 호출하면(구버전) 이벤트 루프가 깨어나지 않아 갱신이 client 로 즉시 전송되지 않고
         # 다음 파이프라인 이벤트 때까지 밀렸다 — 그래서 경과 시간/진행 로그가 '뚝뚝' 끊겨
@@ -1075,8 +1113,16 @@ class PipelineGUI:
     def _auto_check_updates(self) -> None:
         # 설치본 유지보수(오래된 패키지 정리 등)를 먼저 돌린다. velopack import 가 무거워
         # 시작 경로에 둘 수 없어 이 워커 스레드의 첫 일감으로 붙였다.
+        #
+        # 이 호출은 "무한 로딩" 제보의 유력 용의자다 — App().run() 은 받아 두고 아직 적용하지
+        # 않은 업데이트가 있으면 **적용 후 재시작**한다. 그 판단이 잘못되면 기동→적용→재시작이
+        # 반복돼 사용자 눈에는 영원히 로딩 중으로 보인다. 시작/끝을 모두 남겨 그 경우
+        # "유지보수 시작"만 반복되는 로그로 드러나게 한다.
+        startup_log.step("velopack 유지보수 시작")
         velopack_update.run_startup_maintenance()
+        startup_log.step("velopack 유지보수 완료")
         self._check_updates(manual=False)
+        startup_log.step("업데이트 확인 완료")
 
     def _on_update_click(self) -> None:
         if self._pending_update is None:
@@ -1125,29 +1171,82 @@ class PipelineGUI:
             )
             return
         ver = velopack_update.target_version(info)
+        # 표시 진행률은 이 티커가 만든다. Velopack 체크포인트는 하한/구간 전환으로만 쓴다
+        # (이유는 _UPDATE_TICK_SECONDS 위 주석 참고).
+        self._start_update_ticker(ver)
         try:
-            self._set_update_status(f"v{ver} 다운로드 중… 0%", None)
             # 델타(있으면)만 받아 로컬 패키지로 재구성한다. 진행률은 _download_progress 로.
             velopack_update.download(info, progress_cb=self._download_progress)
         except Exception as exc:
+            self._stop_update_ticker()
             logger.error("업데이트 다운로드 실패", exc_info=True)
             self._set_update_status(f"업데이트 실패: {exc}", ft.Colors.RED)
             self._pending_update = None
             return
-        self._set_update_status("업데이트를 적용하고 재시작합니다…", ft.Colors.GREEN)
-        # apply_and_restart 는 현재 프로세스를 종료하므로, 그 전에 위 안내를 클라이언트로
-        # 확실히 밀어낸다(창이 아무 메시지 없이 갑자기 사라지지 않도록).
+        # download() 가 반환한 지금이 진짜 100% 다(패치 뒤의 rename·정리까지 끝난 시점).
+        self._stop_update_ticker()
+        self._set_update_status(f"v{ver} 업데이트 받는 중… 100%", ft.Colors.GREEN)
+        # apply_and_restart 는 현재 프로세스를 종료하므로, 그 전에 100% 를 클라이언트로
+        # 확실히 밀어낸다(창이 아무 표시 없이 갑자기 사라지지 않도록).
         try:
             self.page.update()
         except Exception:
             logger.debug("최종 상태 flush 실패", exc_info=True)
-        time.sleep(0.4)
+        time.sleep(_UPDATE_DONE_LINGER)
         # current\ 를 새 버전으로 교체하고 앱을 재시작한다(현재 프로세스 종료).
         velopack_update.apply_and_restart(info)
 
+    # -- 업데이트 진행률 티커 ---------------------------------------------
+    def _start_update_ticker(self, ver: str) -> None:
+        """표시 진행률을 시간 기반으로 매끄럽게 올리는 스레드를 띄운다."""
+        self._update_lock = threading.Lock()
+        self._update_stop = threading.Event()
+        self._update_shown = 0.0
+        self._update_ceiling = _UPDATE_CEIL_DOWNLOAD
+        self._update_ease = _UPDATE_EASE_DOWNLOAD
+        self._update_ticker = threading.Thread(
+            target=self._update_tick_loop, args=(ver,), daemon=True
+        )
+        self._update_ticker.start()
+
+    def _update_tick_loop(self, ver: str) -> None:
+        while not self._update_stop.is_set():
+            with self._update_lock:
+                self._update_shown = _ease_progress(
+                    self._update_shown, self._update_ceiling, self._update_ease,
+                    _UPDATE_TICK_SECONDS,
+                )
+                shown = self._update_shown
+            self._set_update_status(f"v{ver} 업데이트 받는 중… {int(shown)}%", None)
+            self._update_stop.wait(_UPDATE_TICK_SECONDS)
+
+    def _stop_update_ticker(self) -> None:
+        """티커를 멈추고 정리한다. 여러 번 불러도 안전하다."""
+        stop = getattr(self, "_update_stop", None)
+        if stop is not None:
+            stop.set()
+        ticker = getattr(self, "_update_ticker", None)
+        if ticker is not None and ticker.is_alive():
+            ticker.join(timeout=1.0)
+
     def _download_progress(self, frac: float) -> None:
-        ver = velopack_update.target_version(self._pending_update) if self._pending_update else ""
-        self._set_update_status(f"v{ver} 다운로드 중… {int(frac * 100)}%", None)
+        """Velopack 체크포인트(0·70·100). 표시값의 하한과 구간 전환에만 쓴다."""
+        lock = getattr(self, "_update_lock", None)
+        if lock is None:  # 티커 없이 불릴 일은 없지만, 콜백이 죽으면 다운로드가 끊긴다.
+            return
+        pct = frac * 100.0
+        with lock:
+            if pct >= 100.0:
+                # 패치는 끝났지만 download() 는 rename·Update.exe 추출·정리가 남았다.
+                # 여기서 100 을 띄우면 그 몇 초가 다시 "100%에서 멈춤"이 된다.
+                self._update_ceiling = _UPDATE_CEIL_FINALIZE
+                self._update_ease = _UPDATE_EASE_FINALIZE
+            elif pct >= _UPDATE_CEIL_DOWNLOAD:
+                self._update_ceiling = _UPDATE_CEIL_PATCH
+                self._update_ease = _UPDATE_EASE_PATCH
+                self._update_shown = max(self._update_shown, _UPDATE_CEIL_DOWNLOAD)
+            else:
+                self._update_shown = max(self._update_shown, pct)
 
     def _set_update_status(self, message: str, color: str | None) -> None:
         self.update_status.value = message
@@ -1767,11 +1866,18 @@ class PipelineGUI:
 
 
 def _view(page: ft.Page) -> None:
+    # 여기에 도달했다는 것은 flet 이 파이썬을 붙이고 첫 페이지 콜백까지 왔다는 뜻이다.
+    # "무한 로딩" 제보에서 이 줄이 없으면 파이썬이 아예 붙지 못한 것이고, 있으면 그 뒤
+    # 어느 단계에서 멈췄는지 다음 줄들이 알려 준다(startup_log 모듈 주석 참고).
+    startup_log.step("flet 페이지 콜백 진입")
     PipelineGUI(page)
+    startup_log.step("GUI 구성 완료(창이 그려질 준비)")
 
 
 def main() -> None:
     """GUI 실행 진입점(``yke-gui``)."""
+    startup_log.session_start(__version__)
+    startup_log.step("ft.run 호출 직전")
     ft.run(_view)
 
 
