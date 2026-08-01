@@ -2,9 +2,15 @@
 """버전 릴리스 스크립트: 버전 확인 -> 빌드 -> 릴리스 노트 생성 -> GitHub 릴리스 업로드.
 
 사용:
-    python scripts/deploy.py            # 버전 확인 -> 빌드 -> 릴리스 생성/업로드
-    python scripts/deploy.py --dry-run  # 릴리스 노트만 생성해 출력한다(빌드·업로드 없음)
-    python scripts/deploy.py --force    # 아래 안전장치를 전부 무시한다
+    python scripts/deploy.py               # 버전 확인 -> 빌드 -> 업로드(draft 로 남는다)
+    python scripts/deploy.py --dry-run     # 올릴 에셋 목록만 보여주고 끝낸다(빌드 없음)
+    python scripts/deploy.py --skip-build  # 이미 빌드된 dist/velopack 을 올리기만 한다
+    python scripts/deploy.py --publish     # 두 OS 가 다 올라간 뒤 공개한다
+    python scripts/deploy.py --force       # 아래 안전장치를 전부 무시한다
+
+**기본은 draft 다.** 한쪽 OS 만 올라간 상태로 공개하면 다른 OS 사용자는 받을 파일이 없는
+릴리스를 보게 되고, 더 나쁘게는 그쪽 채널의 업데이트 피드가 없는 릴리스가 최신이 되어 기존
+사용자가 업데이트를 받지 못한다. 두 OS 가 다 올라간 뒤 마지막 실행에 ``--publish`` 를 준다.
 
 절차(OS 별 로컬 빌드 → 같은 태그에 에셋 추가, 2단계):
     0. pyproject.toml 의 [project].version(SSOT)을 미리 올려 둔다(이 스크립트가 대신
@@ -67,10 +73,18 @@ def _require_gh() -> None:
         fail("gh(GitHub CLI)가 필요합니다. https://cli.github.com/ 를 참고하세요.")
 
 
-def _latest_release_tag() -> str | None:
-    """가장 최근 정식 앱 버전 릴리스 태그(v0.0.0 형식)를 돌려준다.
+def _latest_release_tag(*, include_drafts: bool = False) -> str | None:
+    """가장 최근 앱 버전 릴리스 태그(v0.0.0 형식)를 돌려준다.
 
-    gpu-runtime-cu12 같은 프리릴리스/드래프트는 버전 릴리스가 아니므로 제외한다.
+    ``gpu-runtime-cu12`` 같은 프리릴리스는 버전 릴리스가 아니므로 언제나 제외한다.
+
+    draft 는 **용도에 따라 갈린다** — 그래서 인자가 있다.
+
+    - ``include_drafts=False``(기본): 릴리스 노트의 기준점. "지난 정식 릴리스 이후의 커밋"을
+      모아야 하므로 아직 공개되지 않은 draft 는 기준이 될 수 없다.
+    - ``include_drafts=True``: "지금 올리려는 태그가 최신인가" 판정용. 배포는 draft 로
+      만들어지므로, 여기서 draft 를 빼면 **두 번째 OS 가 정상 흐름인데도** 자기가 만든 draft 를
+      못 보고 "최신 릴리스가 아니다"로 중단된다.
     """
     proc = subprocess.run(
         ["gh", "release", "list", "--json", "tagName,isDraft,isPrerelease", "--limit", "100"],
@@ -80,8 +94,11 @@ def _latest_release_tag() -> str | None:
         fail(f"gh release list 실패: {proc.stderr.strip()}")
     releases = json.loads(proc.stdout or "[]")
     for r in releases:  # gh 는 최신순으로 돌려준다.
-        if not r["isDraft"] and not r["isPrerelease"] and _VERSION_TAG_RE.match(r["tagName"]):
-            return r["tagName"]
+        if r["isPrerelease"] or not _VERSION_TAG_RE.match(r["tagName"]):
+            continue
+        if r["isDraft"] and not include_drafts:
+            continue
+        return r["tagName"]
     return None
 
 
@@ -288,6 +305,7 @@ def plan_release(
     force: bool,
     tag_commit: str | None,
     head_commit: str | None,
+    newest_tag: str | None = None,
 ) -> ReleasePlan:
     """gh 조회 결과만 보고 이번 실행의 동작을 정한다(부수효과 없는 순수 함수).
 
@@ -336,13 +354,17 @@ def plan_release(
 
     if not force:
         # 낡은 체크아웃 방어. 정상적인 두 번째 OS 실행은 첫 OS 가 방금 만든 릴리스를 보므로
-        # 반드시 tag == prev_tag 다. 다르면 과거 릴리스에 에셋을 붙이려는 중이다.
-        if prev_tag is not None and tag != prev_tag:
+        # 반드시 tag == newest 다. 다르면 과거 릴리스에 에셋을 붙이려는 중이다.
+        #
+        # **draft 를 포함한** 최신 태그와 비교해야 한다. 배포는 draft 로 만들어지므로,
+        # 공개된 것만 보면 두 번째 OS 는 정상 흐름인데도 자기 draft 를 못 보고 여기서 걸린다.
+        newest = newest_tag if newest_tag is not None else prev_tag
+        if newest is not None and tag != newest:
             return ReleasePlan(
                 mode="append",
                 generate_notes=False,
                 error=(
-                    f"{tag} 는 최신 릴리스({prev_tag})가 아닙니다 — 오래된 커밋/버전에서 "
+                    f"{tag} 는 최신 릴리스({newest})가 아닙니다 — 오래된 커밋/버전에서 "
                     "실행 중입니다.\n"
                     "  git pull 로 최신 커밋을 받고 pyproject.toml 의 [project].version 을 "
                     "확인한 뒤 다시 실행하세요(의도한 재업로드면 --force)."
@@ -409,12 +431,28 @@ def main() -> int:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="릴리스 노트만 생성해 출력한다(빌드·gh 업로드는 하지 않는다).",
+        help="올릴 에셋 목록만 보여주고 끝낸다(빌드·업로드 없음).",
+    )
+    parser.add_argument(
+        "--skip-build",
+        action="store_true",
+        help="빌드를 건너뛰고 이미 만들어진 dist/velopack 산출물을 올린다.",
+    )
+    parser.add_argument(
+        "--publish",
+        action="store_true",
+        help="릴리스를 공개한다. 기본은 draft — 두 OS 가 다 올라간 뒤 마지막 실행에서 준다.",
+    )
+    parser.add_argument(
+        "--notes",
+        type=Path,
+        default=None,
+        help="릴리스 노트 파일(기본: dist/velopack/RELEASE_NOTES.md).",
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="에셋 중복·최신 릴리스 아님·태그 커밋 불일치 검사를 모두 무시한다(재실행 복구용).",
+        help="에셋 중복·최신 릴리스 아님·태그 커밋 불일치·미커밋·미push 검사를 모두 무시한다.",
     )
     args = parser.parse_args()
 
@@ -429,7 +467,9 @@ def main() -> int:
         fail(f"이 OS 는 Velopack 배포 대상이 아닙니다: {exc}")
 
     existing = _release_assets(tag)
+    # 노트 기준점은 공개된 릴리스, 최신 여부 판정은 draft 포함(위 _latest_release_tag 주석).
     prev_tag = _latest_release_tag()
+    newest_tag = _latest_release_tag(include_drafts=True)
     head_commit = _head_commit()
     # 커밋 대조는 릴리스가 이미 있을 때만 의미가 있다(없으면 태그 자체가 아직 없다).
     tag_commit = _tag_commit(tag) if existing is not None else None
@@ -456,6 +496,7 @@ def main() -> int:
         force=args.force,
         tag_commit=tag_commit,
         head_commit=head_commit,
+        newest_tag=newest_tag,
     )
     if plan.error:
         fail(plan.error)
@@ -471,32 +512,40 @@ def main() -> int:
         # 0개라 "릴리스할 변경사항이 없습니다" 로 무조건 죽는다.
         info(f"{tag} 릴리스가 이미 있습니다 → 릴리스 노트는 그대로 두고 {spec.channel} 에셋만 추가합니다.")
 
-    if args.dry_run:
-        if plan.generate_notes:
-            notes = generate_release_notes(prev_tag, tag, commit_log)
-            info("--dry-run: 빌드/업로드 없이 릴리스 노트만 출력합니다.")
-            print(notes)
-        else:
-            info("--dry-run: 이미 있는 릴리스라 노트를 재생성하지 않습니다. 업로드할 에셋만 확인하세요.")
-        return 0
-
-    # 1) 빌드
-    info("빌드 시작 (scripts/build.py)")
-    check([sys.executable, str(REPO_ROOT / "scripts" / "build.py")])
-
     out_dir = platform_spec.VELOPACK_OUT
+
+    # 1) 빌드. --dry-run 은 "무엇이 올라갈지"만 보는 용도라 수 분짜리 빌드를 돌리지 않는다.
+    if not args.skip_build and not args.dry_run:
+        info("빌드 시작 (scripts/build.py)")
+        check([sys.executable, str(REPO_ROOT / "scripts" / "build.py")])
+
     try:
         assets = collect_assets(out_dir, spec, version)
     except ValueError as exc:
         fail(str(exc))
     asset_args = [str(p) for p in assets]
+    info("업로드 대상:")
+    for path in assets:
+        info(f"  - {path.name}")
+
+    if args.dry_run:
+        info("--dry-run: 업로드하지 않고 종료합니다.")
+        return 0
 
     # 2) GitHub 릴리스 생성 / 에셋 추가
     if plan.mode == "create":
-        notes = generate_release_notes(prev_tag, tag, commit_log)
-        notes_path = out_dir / "RELEASE_NOTES.md"
-        notes_path.write_text(notes, encoding="utf-8")
-        info(f"릴리스 노트: {notes_path}")
+        notes_path = args.notes or (out_dir / "RELEASE_NOTES.md")
+        if not notes_path.is_file():
+            # 파일이 없을 때만 초안을 만들어 **그 파일에 써 둔다**. 릴리스는 어차피 draft 로
+            # 만들어지므로 공개 전에 사람이 고칠 수 있다. 파일이 있으면 손대지 않는다 —
+            # 사람이 쓴 노트를 자동 생성으로 덮어쓰는 일은 없어야 한다.
+            notes_path.parent.mkdir(parents=True, exist_ok=True)
+            notes_path.write_text(
+                generate_release_notes(prev_tag, tag, commit_log), encoding="utf-8"
+            )
+            info(f"릴리스 노트 초안 생성: {notes_path} (공개 전 검토하세요)")
+        else:
+            info(f"릴리스 노트: {notes_path}")
 
         info(f"GitHub 릴리스 생성/업로드: {tag}")
         # --target 으로 태그를 **방금 빌드한 커밋**에 고정한다. 넘기지 않으면 gh 는 원격
@@ -506,12 +555,28 @@ def main() -> int:
                       "--title", tag, "--notes-file", str(notes_path)]
         if head_commit:
             create_cmd += ["--target", head_commit]
+        # **기본은 draft.** 한쪽 OS 만 올라간 상태로 공개하면 다른 OS 사용자는 받을 파일이
+        # 없는 릴리스를 본다. 더 나쁜 것은 자동 업데이트다 — 그쪽 채널의 피드가 없는 릴리스가
+        # 최신이 되면 기존 사용자가 업데이트를 못 받는다. 두 OS 가 다 올라간 뒤 --publish 한다.
+        if not args.publish:
+            create_cmd.append("--draft")
         check(create_cmd)
     else:
         # 노트 관련 옵션을 절대 넘기지 않는다 — 첫 플랫폼이 쓴 본문을 덮어쓰면 안 된다.
         # --clobber 는 업로드가 중간에 끊겨 같은 이름 에셋이 남았을 때 재실행 복구용.
         info(f"GitHub 릴리스에 {spec.channel} 에셋 추가: {tag}")
         check(["gh", "release", "upload", tag, *asset_args, "--clobber"])
+
+    if args.publish:
+        # append 경로에서도 공개할 수 있어야 한다(두 번째 OS 가 마지막인 게 보통이다).
+        info(f"릴리스 공개: {tag}")
+        check(["gh", "release", "edit", tag, "--draft=false"])
+        info(f"완료(공개): {platform_spec.REPO_URL}/releases/tag/{tag}")
+    else:
+        info(
+            f"완료(draft): {platform_spec.REPO_URL}/releases/tag/{tag}\n"
+            "  다른 OS 산출물까지 올린 뒤 --publish 로 공개하세요."
+        )
     return 0
 
 

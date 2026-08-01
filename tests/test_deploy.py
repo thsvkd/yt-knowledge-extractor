@@ -312,6 +312,44 @@ class TestCollectAssetsChannelIsolation(_AssetsCase):
         )
 
 
+class TestDraftAwareStalenessGuard(unittest.TestCase):
+    """draft 기본 배포에서 두 번째 OS 가 정상 흐름인데도 막히지 않는지.
+
+    배포는 draft 로 만들어지므로, "이 태그가 최신인가" 판정에 공개된 릴리스만 보면 두 번째
+    OS 는 자기가 만든 draft 를 못 보고 "최신이 아니다"로 중단된다. 오늘 실제로 검증한 2단계
+    릴리스가 그대로 깨지는 회귀라 여기서 고정한다.
+    """
+
+    def _plan(self, *, tag: str, prev_tag: str | None, newest_tag: str | None):
+        return deploy.plan_release(
+            tag=tag,
+            prev_tag=prev_tag,
+            existing_assets=["releases.win.json"],  # 다른 OS 가 먼저 올렸다
+            releases_json="releases.osx.json",
+            force=False,
+            tag_commit="abc",
+            head_commit="abc",
+            newest_tag=newest_tag,
+        )
+
+    def test_second_os_passes_when_release_is_draft(self) -> None:
+        """draft v0.1.6 이 있고 공개된 최신은 v0.1.5 인 상황 — 정상 흐름이다."""
+        plan = self._plan(tag="v0.1.6", prev_tag="v0.1.5", newest_tag="v0.1.6")
+        self.assertIsNone(plan.error)
+        self.assertEqual(plan.mode, "append")
+        self.assertFalse(plan.generate_notes)
+
+    def test_stale_checkout_still_rejected(self) -> None:
+        """가드가 물러지면 안 된다 — 과거 태그에 에셋을 붙이는 것은 여전히 막아야 한다."""
+        plan = self._plan(tag="v0.1.4", prev_tag="v0.1.5", newest_tag="v0.1.6")
+        self.assertIsNotNone(plan.error)
+
+    def test_falls_back_to_prev_tag_when_newest_not_given(self) -> None:
+        """newest_tag 를 안 넘기면 예전 동작(prev_tag 기준) 그대로여야 한다."""
+        plan = self._plan(tag="v0.1.4", prev_tag="v0.1.5", newest_tag=None)
+        self.assertIsNotNone(plan.error)
+
+
 class TestCheckWorktreeClean(unittest.TestCase):
     """미커밋 변경이 있는 채로 배포하면 '어느 커밋에도 없는 코드'가 그 버전으로 나간다.
 
