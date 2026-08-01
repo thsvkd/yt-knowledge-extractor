@@ -22,7 +22,17 @@ def _seg() -> list[Segment]:
     return [Segment(start=0.0, end=1.0, text="hi")]
 
 
-def _fake_bt(url, cfg, data_dir, force, *, log=print, on_progress=None, on_stt_progress=None, should_stop=None):
+def _fake_bt(
+    url,
+    cfg,
+    data_dir,
+    force,
+    *,
+    log=print,
+    on_progress=None,
+    on_stt_progress=None,
+    should_stop=None,
+):
     vid = "v_" + url
     return vid, {"id": vid, "title": url}, _seg()
 
@@ -54,15 +64,23 @@ class TestRunPipeline(unittest.TestCase):
         # 스피너용 transient 이벤트가 하나 이상 존재한다.
         self.assertTrue(any(e.transient for e in events))
         # 영상별 성공 이벤트(phase=transcript)가 영상 수만큼 나온다.
-        transcript_success = [
-            e for e in events if e.level == "success" and e.phase == "transcript"
-        ]
+        transcript_success = [e for e in events if e.level == "success" and e.phase == "transcript"]
         self.assertEqual(len(transcript_success), 2)
 
     def test_stt_sub_progress_reported_and_transient(self) -> None:
         # STT 세부 진행(초 단위)이 combined sub_progress 로 변환되어 흘러가는지,
         # 그리고 스피너/바 전용(transient)이라 영속 로그에는 안 남는지 확인한다.
-        def bt(url, cfg, data_dir, force, *, log=print, on_progress=None, on_stt_progress=None, should_stop=None):
+        def bt(
+            url,
+            cfg,
+            data_dir,
+            force,
+            *,
+            log=print,
+            on_progress=None,
+            on_stt_progress=None,
+            should_stop=None,
+        ):
             if on_stt_progress:
                 on_stt_progress(30.0, 100.0)
                 on_stt_progress(100.0, 100.0)
@@ -78,7 +96,17 @@ class TestRunPipeline(unittest.TestCase):
         self.assertTrue(all(e.transient for e in sub_events))
 
     def test_failure_is_isolated(self) -> None:
-        def bt(url, cfg, data_dir, force, *, log=print, on_progress=None, on_stt_progress=None, should_stop=None):
+        def bt(
+            url,
+            cfg,
+            data_dir,
+            force,
+            *,
+            log=print,
+            on_progress=None,
+            on_stt_progress=None,
+            should_stop=None,
+        ):
             if url == "bad":
                 raise RuntimeError("boom")
             return "v_ok", {"id": "v_ok"}, _seg()
@@ -100,7 +128,17 @@ class TestRunPipeline(unittest.TestCase):
     def test_stopped_error_mid_video_stt_is_not_a_failure(self) -> None:
         # 진행 중이던 영상의 STT 자체가 should_stop 을 감지해 StoppedError 를 던진 경우 —
         # (다음 영상 경계를 기다리지 않고) 즉시 멈추되, failures 목록에는 넣지 않는다.
-        def bt(url, cfg, data_dir, force, *, log=print, on_progress=None, on_stt_progress=None, should_stop=None):
+        def bt(
+            url,
+            cfg,
+            data_dir,
+            force,
+            *,
+            log=print,
+            on_progress=None,
+            on_stt_progress=None,
+            should_stop=None,
+        ):
             if url == "slow":
                 raise StoppedError("stt stopped mid video")
             return "v_" + url, {"id": "v_" + url}, _seg()
@@ -122,7 +160,17 @@ class TestRunPipeline(unittest.TestCase):
     def test_stop_between_videos(self) -> None:
         processed = {"n": 0}
 
-        def bt(url, cfg, data_dir, force, *, log=print, on_progress=None, on_stt_progress=None, should_stop=None):
+        def bt(
+            url,
+            cfg,
+            data_dir,
+            force,
+            *,
+            log=print,
+            on_progress=None,
+            on_stt_progress=None,
+            should_stop=None,
+        ):
             processed["n"] += 1
             return "v_" + url, {"id": "v_" + url}, _seg()
 
@@ -211,9 +259,7 @@ class TestRunPipeline(unittest.TestCase):
             mock.patch.object(run.stage1_ingest, "expand_source", side_effect=fake_expand),
             mock.patch.object(run, "build_transcript", side_effect=_fake_bt) as bt,
         ):
-            res = run.run_pipeline(
-                ["https://www.youtube.com/@chan"], self.cfg, stage="transcript"
-            )
+            res = run.run_pipeline(["https://www.youtube.com/@chan"], self.cfg, stage="transcript")
         # 재생 가능한 영상(ok)만 실제로 처리 → build_transcript 는 딱 1회 호출.
         self.assertEqual(bt.call_count, 1)
         self.assertEqual(res.video_count, 1)
@@ -367,28 +413,23 @@ class TestCaptionValidation(unittest.TestCase):
     def test_one_liner_rejected(self):
         # 사용자 실제 실패 케이스: 긴 영상에 한 줄짜리 자막.
         segs = [Segment(start=0, end=5, text="한 줄뿐인 깨진 자막")]
-        self.assertFalse(
-            run._caption_is_usable(segs, 600, min_coverage=0.5, min_segments=2)
-        )
+        self.assertFalse(run._caption_is_usable(segs, 600, min_coverage=0.5, min_segments=2))
 
     def test_low_coverage_rejected(self):
         # 세그먼트는 여러 개지만 앞부분만 덮고 끊긴 자막.
         segs = [Segment(start=0, end=10, text="앞부분"), Segment(start=10, end=20, text="조금")]
-        self.assertFalse(
-            run._caption_is_usable(segs, 600, min_coverage=0.5, min_segments=2)
-        )
+        self.assertFalse(run._caption_is_usable(segs, 600, min_coverage=0.5, min_segments=2))
 
     def test_complete_caption_accepted(self):
-        segs = [Segment(start=0, end=300, text="앞부분"), Segment(start=300, end=590, text="뒷부분")]
-        self.assertTrue(
-            run._caption_is_usable(segs, 600, min_coverage=0.5, min_segments=2)
-        )
+        segs = [
+            Segment(start=0, end=300, text="앞부분"),
+            Segment(start=300, end=590, text="뒷부분"),
+        ]
+        self.assertTrue(run._caption_is_usable(segs, 600, min_coverage=0.5, min_segments=2))
 
     def test_coverage_check_disabled_when_ratio_zero(self):
         segs = [Segment(start=0, end=10, text="앞부분"), Segment(start=10, end=20, text="조금")]
-        self.assertTrue(
-            run._caption_is_usable(segs, 600, min_coverage=0.0, min_segments=2)
-        )
+        self.assertTrue(run._caption_is_usable(segs, 600, min_coverage=0.0, min_segments=2))
 
 
 class TestBuildTranscriptPriority(unittest.TestCase):
@@ -413,8 +454,13 @@ class TestBuildTranscriptPriority(unittest.TestCase):
         return c
 
     def _meta(self, **kw) -> dict:
-        m = {"id": self.vid, "title": "t", "duration": 600,
-             "manual_sub_lang": None, "auto_sub_lang": None}
+        m = {
+            "id": self.vid,
+            "title": "t",
+            "duration": 600,
+            "manual_sub_lang": None,
+            "auto_sub_lang": None,
+        }
         m.update(kw)
         return m
 
@@ -633,11 +679,13 @@ class TestBuildTranscriptPriority(unittest.TestCase):
         def stt(*a, **k):
             raise AssertionError("자막 경로")
 
-        with self._patched(meta, stt, parse):
-            with mock.patch.object(
+        with (
+            self._patched(meta, stt, parse),
+            mock.patch.object(
                 run.stage1_ingest, "probe", return_value={"id": self.vid, "title": "제목: 첫/화"}
-            ):
-                run.build_transcript("testvid", self._cfg(), self.data, False)
+            ),
+        ):
+            run.build_transcript("testvid", self._cfg(), self.data, False)
         # 금지 문자(:,/)는 공백으로 바뀌고, 예전 ID 폴더는 새 이름으로 옮겨진다.
         root = self.data / f"제목 첫 화 [{self.vid}]"
         self.assertTrue((root / "transcript.raw.txt").exists())
@@ -660,10 +708,26 @@ class TestMergedTranscripts(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_raw_merge_written_for_all_videos(self) -> None:
-        def bt(url, cfg, data_dir, force, *, log=print, on_progress=None, on_stt_progress=None, should_stop=None):
+        def bt(
+            url,
+            cfg,
+            data_dir,
+            force,
+            *,
+            log=print,
+            on_progress=None,
+            on_stt_progress=None,
+            should_stop=None,
+        ):
             vid = "v_" + url
-            meta = {"id": vid, "title": f"{url} 제목", "transcript_source": "manual",
-                    "duration": 65, "channel": "채널", "webpage_url": f"https://y/{vid}"}
+            meta = {
+                "id": vid,
+                "title": f"{url} 제목",
+                "transcript_source": "manual",
+                "duration": 65,
+                "channel": "채널",
+                "webpage_url": f"https://y/{vid}",
+            }
             return vid, meta, [Segment(start=0.0, end=1.0, text=f"{url} 내용")]
 
         with mock.patch.object(run, "build_transcript", side_effect=bt):
@@ -709,7 +773,17 @@ class TestMergedTranscripts(unittest.TestCase):
     def test_partial_merge_written_when_stopped(self) -> None:
         processed = {"n": 0}
 
-        def bt(url, cfg, data_dir, force, *, log=print, on_progress=None, on_stt_progress=None, should_stop=None):
+        def bt(
+            url,
+            cfg,
+            data_dir,
+            force,
+            *,
+            log=print,
+            on_progress=None,
+            on_stt_progress=None,
+            should_stop=None,
+        ):
             processed["n"] += 1
             return "v_" + url, {"id": "v_" + url, "title": url}, _seg()
 
@@ -732,10 +806,10 @@ class TestMergedTranscripts(unittest.TestCase):
             mock.patch.object(run.stage1_ingest, "expand_source", return_value=entries),
             mock.patch.object(run, "build_transcript", side_effect=_fake_bt),
         ):
-            res = run.run_pipeline(
-                ["https://www.youtube.com/@chan"], self.cfg, stage="transcript"
-            )
-        self.assertEqual(res.all_transcripts_raw_path, self.out / "chan" / run.ALL_TRANSCRIPTS_RAW_TXT)
+            res = run.run_pipeline(["https://www.youtube.com/@chan"], self.cfg, stage="transcript")
+        self.assertEqual(
+            res.all_transcripts_raw_path, self.out / "chan" / run.ALL_TRANSCRIPTS_RAW_TXT
+        )
         self.assertTrue(res.all_transcripts_raw_path.exists())
 
 

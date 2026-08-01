@@ -31,7 +31,7 @@ from .llm.credentials import has_gemini_api_key, set_gemini_api_key
 from .llm.gemini_client import genai_available as _genai_available
 from .llm.gemini_client import list_generate_models as _list_gemini_models
 from .llm.gemini_client import resolve_aliases as _resolve_gemini_aliases
-from .run import Progress, PipelineResult, run_pipeline, _fmt_hms
+from .run import PipelineResult, Progress, _fmt_hms, run_pipeline
 from .utils import is_channel_or_playlist_url
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,10 @@ _UI_TICK_SECONDS = 0.15
 _STT_MODELS = ("auto", "tiny", "base", "small", "medium", "large-v3")
 # STT 엔진 선택지: (표시명, stt.engine 값). faster-whisper(AI, 기본)와 sherpa-onnx(경량
 # 오프라인 — `uv sync --extra sherpa` 필요, 정확도는 낮지만 완전 오프라인·초경량) 중 선택.
-_STT_ENGINES = [("AI 모델 (faster-whisper)", "faster-whisper"), ("경량 모델 (sherpa-onnx)", "sherpa")]
+_STT_ENGINES = [
+    ("AI 모델 (faster-whisper)", "faster-whisper"),
+    ("경량 모델 (sherpa-onnx)", "sherpa"),
+]
 # 예전 GUI 설정에 저장돼 있을 수 있는 엔진 값 → 현재 값. Vosk 는 sherpa-onnx 로 교체됐다.
 _STT_ENGINE_ALIASES = {"vosk": "sherpa", "sherpa-onnx": "sherpa"}
 # GPU 가속(cuBLAS 온디맨드 런타임)을 지원하는 플랫폼인지. cuBLAS 온디맨드 런타임은
@@ -387,7 +390,9 @@ class PipelineGUI:
         # 판별에 성공해 await 한다. 람다로 감싸면 sync 로 취급돼 코루틴이 버려지고 무동작이 된다.
         # functools.partial 은 iscoroutinefunction 이 언랩해 코루틴 함수로 인식된다.
         self.out_browse_btn = ft.Button(
-            "찾아보기", icon=ft.Icons.FOLDER_OPEN, on_click=partial(self._pick_folder, self.out_field)
+            "찾아보기",
+            icon=ft.Icons.FOLDER_OPEN,
+            on_click=partial(self._pick_folder, self.out_field),
         )
 
         # 실행 단계(2단계) + 단계에 따라 LLM UI 활성/비활성.
@@ -400,7 +405,9 @@ class PipelineGUI:
             on_select=lambda _e: self._on_stage_changed(),
         )
 
-        self.start_btn = ft.Button("시작", icon=ft.Icons.PLAY_ARROW, on_click=self._on_start_stop_click)
+        self.start_btn = ft.Button(
+            "시작", icon=ft.Icons.PLAY_ARROW, on_click=self._on_start_stop_click
+        )
         self.open_btn = ft.Button(
             "저장 폴더 열기", icon=ft.Icons.FOLDER, on_click=self._open_folder, disabled=True
         )
@@ -664,9 +671,7 @@ class PipelineGUI:
                                     wrap=True,
                                 ),
                                 advanced,
-                                ft.Row(
-                                    [self.start_btn, self.open_btn, self.wiki_btn], wrap=True
-                                ),
+                                ft.Row([self.start_btn, self.open_btn, self.wiki_btn], wrap=True),
                                 ft.Row(
                                     [self.progress, self.overall_caption],
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -690,9 +695,7 @@ class PipelineGUI:
                                     [
                                         ft.Row(
                                             [
-                                                ft.Text(
-                                                    "진행 로그", size=12, color=_muted_color
-                                                ),
+                                                ft.Text("진행 로그", size=12, color=_muted_color),
                                                 self.copy_log_btn,
                                             ],
                                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -1213,7 +1216,9 @@ class PipelineGUI:
         while not self._update_stop.is_set():
             with self._update_lock:
                 self._update_shown = _ease_progress(
-                    self._update_shown, self._update_ceiling, self._update_ease,
+                    self._update_shown,
+                    self._update_ceiling,
+                    self._update_ease,
                     _UPDATE_TICK_SECONDS,
                 )
                 shown = self._update_shown
@@ -1604,19 +1609,33 @@ class PipelineGUI:
     def _step_chip(self, label: str, state: str) -> ft.Container:
         muted = self._muted_color
         if state == "done":
-            leading, color = ft.Icon(ft.Icons.CHECK_CIRCLE, size=14, color=ft.Colors.GREEN), ft.Colors.GREEN
+            leading, color = (
+                ft.Icon(ft.Icons.CHECK_CIRCLE, size=14, color=ft.Colors.GREEN),
+                ft.Colors.GREEN,
+            )
         elif state == "active":
             leading = ft.ProgressRing(width=12, height=12, stroke_width=2, color=ft.Colors.PRIMARY)
             color = ft.Colors.PRIMARY
         elif state == "error":
             leading, color = ft.Icon(ft.Icons.ERROR, size=14, color=ft.Colors.RED), ft.Colors.RED
         elif state == "stopped":
-            leading, color = ft.Icon(ft.Icons.PAUSE_CIRCLE, size=14, color=ft.Colors.AMBER), ft.Colors.AMBER
+            leading, color = (
+                ft.Icon(ft.Icons.PAUSE_CIRCLE, size=14, color=ft.Colors.AMBER),
+                ft.Colors.AMBER,
+            )
         else:  # pending
             leading, color = ft.Icon(ft.Icons.CIRCLE_OUTLINED, size=14, color=muted), muted
         return ft.Container(
             content=ft.Row(
-                [leading, ft.Text(label, size=12, color=color, weight=ft.FontWeight.BOLD if state == "active" else None)],
+                [
+                    leading,
+                    ft.Text(
+                        label,
+                        size=12,
+                        color=color,
+                        weight=ft.FontWeight.BOLD if state == "active" else None,
+                    ),
+                ],
                 spacing=4,
                 tight=True,
             ),
@@ -1625,7 +1644,9 @@ class PipelineGUI:
             bgcolor=ft.Colors.with_opacity(0.12, color) if state != "pending" else None,
         )
 
-    def _rebuild_phase_row(self, current_phase: str | None, *, terminal_state: str | None = None) -> None:
+    def _rebuild_phase_row(
+        self, current_phase: str | None, *, terminal_state: str | None = None
+    ) -> None:
         """전체 파이프라인 타임라인 칩(트랜스크립트→추출→통합)을 다시 그린다.
 
         ``current_phase`` 가 ``"done"`` 이면 전부 완료로, 목록에 없으면(대기 중) 전부
@@ -1653,7 +1674,9 @@ class PipelineGUI:
             controls.append(self._step_chip(_PHASE_LABELS[key], state))
         self.phase_row.controls = controls
 
-    def _rebuild_substep_row(self, current_substep: str | None, *, terminal_state: str | None = None) -> None:
+    def _rebuild_substep_row(
+        self, current_substep: str | None, *, terminal_state: str | None = None
+    ) -> None:
         """트랜스크립트 단계 내부 세부 타임라인(소스 확인→오디오·메타→자막 확인→STT→정제)."""
         order = [key for key, _ in _SUBSTEP_LABELS]
         labels = dict(_SUBSTEP_LABELS)

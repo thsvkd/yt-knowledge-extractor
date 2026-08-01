@@ -45,22 +45,59 @@ def _gui(stage: str) -> PipelineGUI:
 
 def _transcript_events(i: int, total: int, *, stt: bool) -> list[Progress]:
     evs = [
-        Progress(message="start", phase="transcript", done=i - 1, total=total,
-                 indeterminate=True, transient=True),
-        Progress(message="ingest", phase="transcript", substep="ingest",
-                 indeterminate=True, transient=True),
+        Progress(
+            message="start",
+            phase="transcript",
+            done=i - 1,
+            total=total,
+            indeterminate=True,
+            transient=True,
+        ),
+        Progress(
+            message="ingest",
+            phase="transcript",
+            substep="ingest",
+            indeterminate=True,
+            transient=True,
+        ),
     ]
     if stt:
-        evs.append(Progress(message="stt-dl", phase="transcript", substep="stt",
-                            indeterminate=True, transient=True))
+        evs.append(
+            Progress(
+                message="stt-dl",
+                phase="transcript",
+                substep="stt",
+                indeterminate=True,
+                transient=True,
+            )
+        )
         for frac in (0.0, 0.5, 1.0):
-            evs.append(Progress(message="stt", phase="transcript", substep="stt",
-                               done=i - 1, total=total, transient=True, sub_progress=frac))
+            evs.append(
+                Progress(
+                    message="stt",
+                    phase="transcript",
+                    substep="stt",
+                    done=i - 1,
+                    total=total,
+                    transient=True,
+                    sub_progress=frac,
+                )
+            )
     else:
-        evs.append(Progress(message="subs", phase="transcript", substep="subtitles",
-                           indeterminate=True, transient=True))
-    evs.append(Progress(message="clean", phase="transcript", substep="clean",
-                       indeterminate=True, transient=True))
+        evs.append(
+            Progress(
+                message="subs",
+                phase="transcript",
+                substep="subtitles",
+                indeterminate=True,
+                transient=True,
+            )
+        )
+    evs.append(
+        Progress(
+            message="clean", phase="transcript", substep="clean", indeterminate=True, transient=True
+        )
+    )
     evs.append(Progress(message="ok", level="success", phase="transcript", done=i, total=total))
     return evs
 
@@ -102,8 +139,15 @@ class TestTranscriptStage(unittest.TestCase):
         clean = Progress(message="clean", phase="transcript", substep="clean")
         # ingest → subtitles → clean 순서로만.
         for e in [
-            Progress(message="s", phase="transcript", done=0, total=1, sub_progress=None,
-                     indeterminate=True, transient=True),
+            Progress(
+                message="s",
+                phase="transcript",
+                done=0,
+                total=1,
+                sub_progress=None,
+                indeterminate=True,
+                transient=True,
+            ),
             Progress(message="i", phase="transcript", substep="ingest", transient=True),
             Progress(message="sub", phase="transcript", substep="subtitles", transient=True),
         ]:
@@ -150,14 +194,20 @@ class TestConfigPartition(unittest.TestCase):
             g._update_progress_bars(e)
         # 추출 2영상 → 0.50 → 0.85
         for i in (1, 2):
-            g._update_progress_bars(Progress(message="추출", phase="extract", done=i - 1, total=2, indeterminate=True))
-            g._update_progress_bars(Progress(message="유닛", level="success", phase="extract", done=i, total=2))
+            g._update_progress_bars(
+                Progress(message="추출", phase="extract", done=i - 1, total=2, indeterminate=True)
+            )
+            g._update_progress_bars(
+                Progress(message="유닛", level="success", phase="extract", done=i, total=2)
+            )
         self.assertAlmostEqual(g.progress.value, 0.85)
         # 통합 중 → 0.85 유지
         g._update_progress_bars(Progress(message="통합 중", phase="integrate", indeterminate=True))
         self.assertAlmostEqual(g.progress.value, 0.85)
         # 최종 완료(done + done/total) → 1.0
-        g._update_progress_bars(Progress(message="완료", level="success", phase="done", done=1, total=1))
+        g._update_progress_bars(
+            Progress(message="완료", level="success", phase="done", done=1, total=1)
+        )
         self.assertAlmostEqual(g.progress.value, 1.0)
 
 

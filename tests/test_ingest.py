@@ -49,7 +49,9 @@ class TestDownloadRetry(unittest.TestCase):
         sleep.assert_not_called()
 
     def test_retries_on_403_then_succeeds(self):
-        err = yt_dlp.utils.DownloadError("ERROR: unable to download video data: HTTP Error 403: Forbidden")
+        err = yt_dlp.utils.DownloadError(
+            "ERROR: unable to download video data: HTTP Error 403: Forbidden"
+        )
         logs: list[str] = []
         with (
             self._patched_ydl([err, {"id": "v1"}]),
@@ -70,7 +72,9 @@ class TestDownloadRetry(unittest.TestCase):
                 _download({}, "https://x", log=lambda m: None)
 
     def test_non_retryable_error_raises_immediately(self):
-        err = yt_dlp.utils.DownloadError("ERROR: Private video. Sign in if you've been granted access")
+        err = yt_dlp.utils.DownloadError(
+            "ERROR: Private video. Sign in if you've been granted access"
+        )
         with (
             self._patched_ydl([err, {"id": "should-not-reach"}]),
             mock.patch.object(stage1_ingest.time, "sleep") as sleep,
@@ -93,16 +97,23 @@ class TestClassifyDownloadFailure(unittest.TestCase):
         )
 
     def test_private(self):
-        self.assertEqual(self._code("ERROR: Private video. Sign in if you've been granted access"), "private")
+        self.assertEqual(
+            self._code("ERROR: Private video. Sign in if you've been granted access"), "private"
+        )
 
     def test_geo_blocked(self):
         self.assertEqual(self._code("This video is not available in your country"), "geo_blocked")
 
     def test_age_restricted(self):
-        self.assertEqual(self._code("Sign in to confirm your age. This video may be inappropriate"), "age_restricted")
+        self.assertEqual(
+            self._code("Sign in to confirm your age. This video may be inappropriate"),
+            "age_restricted",
+        )
 
     def test_removed(self):
-        self.assertEqual(self._code("Video unavailable. This video has been removed by the uploader"), "removed")
+        self.assertEqual(
+            self._code("Video unavailable. This video has been removed by the uploader"), "removed"
+        )
 
     def test_network_is_retryable_bucket(self):
         self.assertEqual(self._code("HTTP Error 429: Too Many Requests"), "network")

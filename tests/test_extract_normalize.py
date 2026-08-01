@@ -10,7 +10,13 @@ from yke.pipeline.stage5_extract import _to_unit
 class TestToUnit(unittest.TestCase):
     def test_korean_type_mapped(self):
         u = _to_unit(
-            {"concept": "c", "statement": "s", "type": "사실", "timestamp": "01:00", "quote_evidence": "q"},
+            {
+                "concept": "c",
+                "statement": "s",
+                "type": "사실",
+                "timestamp": "01:00",
+                "quote_evidence": "q",
+            },
             "v",
         )
         self.assertEqual(u.type, "fact")

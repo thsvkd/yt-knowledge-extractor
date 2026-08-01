@@ -72,7 +72,7 @@ def fmt_ts(seconds: float | None) -> str:
 
 
 def ts_to_seconds(ts: str) -> int:
-    """"MM:SS" 또는 "H:MM:SS" -> 초."""
+    """ "MM:SS" 또는 "H:MM:SS" -> 초."""
     try:
         parts = [int(p) for p in ts.strip().split(":")]
     except ValueError:

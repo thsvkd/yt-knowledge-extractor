@@ -74,9 +74,7 @@ _TEMPLATE_MAIN_MENU_XIB = """\
 
 class TestPatchWindowsRunner(unittest.TestCase):
     def setUp(self) -> None:
-        self.patched = flet_template.patch_windows_runner(
-            _TEMPLATE_MAIN_CPP, width=820, height=860
-        )
+        self.patched = flet_template.patch_windows_runner(_TEMPLATE_MAIN_CPP, width=820, height=860)
 
     def test_exits_early_on_velopack_hook(self):
         """Velopack 훅 인자면 Flutter 엔진(창 생성)보다 먼저 성공 종료해야 한다."""
@@ -129,8 +127,12 @@ class TestPatchMacosRunner(unittest.TestCase):
     def test_both_window_rects_are_resized(self):
         # 창 프레임(contentRect)과 그 안의 contentView frame 이 함께 바뀌어야 한다.
         # 하나만 바꾸면 뷰가 창보다 크거나 작은 채로 첫 프레임이 그려진다.
-        self.assertNotIn('<rect key="contentRect" x="335" y="390" width="800" height="600"/>', self.patched)
-        self.assertNotIn('<rect key="frame" x="0.0" y="0.0" width="800" height="600"/>', self.patched)
+        self.assertNotIn(
+            '<rect key="contentRect" x="335" y="390" width="800" height="600"/>', self.patched
+        )
+        self.assertNotIn(
+            '<rect key="frame" x="0.0" y="0.0" width="800" height="600"/>', self.patched
+        )
         self.assertEqual(self.patched.count('width="820" height="860"'), 2)
 
     def test_unrelated_rect_is_left_alone(self):
@@ -190,9 +192,7 @@ class TestWindowSize(unittest.TestCase):
         """네이티브 러너의 첫 창 크기는 gui.py 의 상수(SSOT)에서 온다."""
         from yke import gui
 
-        self.assertEqual(
-            flet_template.window_size(), (gui._WINDOW_WIDTH, gui._WINDOW_HEIGHT)
-        )
+        self.assertEqual(flet_template.window_size(), (gui._WINDOW_WIDTH, gui._WINDOW_HEIGHT))
 
 
 class TestUninstallCredentialCleanup(unittest.TestCase):
@@ -217,7 +217,8 @@ class TestUninstallCredentialCleanup(unittest.TestCase):
         for target in ('L"svc"', 'L"acct@svc"'):
             self.assertIn(target, patched)
             self.assertGreater(
-                patched.index(target), uninstall_at,
+                patched.index(target),
+                uninstall_at,
                 "CredDeleteW 가 uninstall 분기보다 앞에 있으면 모든 훅에서 실행된다",
             )
 

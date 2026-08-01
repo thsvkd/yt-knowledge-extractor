@@ -24,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Velopack packId / 표시 이름 / 레포 URL. src/yke/velopack_update.py·gpu_runtime.py 의
 # 값과 반드시 일치해야 한다(앱이 이 packId 로 설치되고 이 레포 릴리스에서 업데이트를 받는다).
 PACK_ID = "YtKnowledgeExtractor"
-PRODUCT = "YouTube Knowledge Extractor"          # vpk --packTitle / flet --product
+PRODUCT = "YouTube Knowledge Extractor"  # vpk --packTitle / flet --product
 REPO_URL = "https://github.com/thsvkd/yt-knowledge-extractor"
 PACK_AUTHORS = "thsvkd"
 
@@ -57,11 +57,11 @@ _DEFAULT_CHANNEL_TARGET = "windows"
 
 @dataclass(frozen=True)
 class PlatformSpec:
-    target: str          # "windows" | "macos"  (build.py 의 _target() 값과 같은 어휘)
-    channel: str         # "win" | "osx"        (vpk --channel)
-    main_exe: str        # vpk --mainExe 에 넘길 '파일 이름'(경로 아님)
-    setup_glob: str      # "*-Setup.exe" | "*-Setup.pkg"
-    releases_json: str   # "releases.win.json" | "releases.osx.json"
+    target: str  # "windows" | "macos"  (build.py 의 _target() 값과 같은 어휘)
+    channel: str  # "win" | "osx"        (vpk --channel)
+    main_exe: str  # vpk --mainExe 에 넘길 '파일 이름'(경로 아님)
+    setup_glob: str  # "*-Setup.exe" | "*-Setup.pkg"
+    releases_json: str  # "releases.win.json" | "releases.osx.json"
 
     def nupkg_globs(self, version: str) -> tuple[str, str]:
         """(full, delta) 글롭. Velopack 은 **Windows 타깃 + win 채널**일 때만 채널 접미사를

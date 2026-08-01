@@ -47,9 +47,7 @@ class TestLoadConfig(unittest.TestCase):
 
     def test_partial_override_keeps_other_defaults(self):
         cfg = load_config(
-            self._write(
-                "videos: []\nlanguage: en\nstt:\n  model: small\n  device: cuda\n"
-            )
+            self._write("videos: []\nlanguage: en\nstt:\n  model: small\n  device: cuda\n")
         )
         self.assertEqual(cfg.language, "en")
         self.assertEqual(cfg.stt.model, "small")
@@ -59,9 +57,7 @@ class TestLoadConfig(unittest.TestCase):
 
     def test_sherpa_engine_override(self):
         cfg = load_config(
-            self._write(
-                "videos: []\nstt:\n  engine: sherpa\n  sherpa_model_size: large\n"
-            )
+            self._write("videos: []\nstt:\n  engine: sherpa\n  sherpa_model_size: large\n")
         )
         self.assertEqual(cfg.stt.engine, "sherpa")
         self.assertEqual(cfg.stt.sherpa_model_size, "large")

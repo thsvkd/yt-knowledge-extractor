@@ -83,7 +83,36 @@ no-build-package = ["sherpa-onnx"]
 # 지워버린다. dev 그룹에 두면 sync 가 보존해 이 churn 을 없앤다.
 # flet-cli 는 UI 클라이언트(Flutter) 버전을 결정한다. 번들 flet-desktop 과 반드시 같은
 # 버전으로 고정해야 렌더링 프로토콜이 맞는다(불일치 시 빈 창).
-dev = ["flet-cli==0.85.3", "pytest>=8.0"]
+dev = ["flet-cli==0.85.3", "pytest>=8.0", "ruff>=0.15"]
+
+# 린트·포맷. naver-post-crawler 와 같은 규칙 집합을 쓴다(두 레포를 오갈 때 같은 코드가 한쪽에서만
+# 지적되는 일이 없도록). target-version 만 다르다 — 이 앱은 3.11 을 최소로 지원한다.
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    # 줄 길이는 `ruff format` 이 책임진다(코드는 이미 100칸으로 정렬된다). E501 에 남는 것은
+    # 포맷터가 쪼갤 수 없는 문자열·주석뿐인데, ruff 는 길이를 **표시 너비**로 세고 한글은
+    # 2칸이라 이 규칙이 한국어 주석에는 사실상 "한글 50자" 제한이 된다. 이 저장소는 주석으로
+    # "왜"를 길게 설명하는 것이 규약이라 그 제한이 규약과 정면으로 부딪힌다.
+    "E501",
+    # ProgramFiles(x86) · OneDrive · OneDriveConsumer 는 Windows 가 실제로 쓰는 이름이다.
+    # 대문자로 바꿔도 동작은 같지만(파이썬이 Windows 에서 키를 대문자로 정규화한다),
+    # 원본 표기를 유지하는 편이 무엇을 읽는지 분명하다.
+    "SIM112",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 테스트의 중첩 with 는 바깥이 mock, 안쪽이 assertRaises 인 형태가 대부분이다. 하나로 합치면
+# assertRaises 의 적용 범위가 넓어져 "무엇이 예외를 던져야 하는지"가 흐려진다.
+"tests/*" = ["SIM117"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
 
 [tool.flet.app]
 # src-layout 이므로 flet build 가 src/ 아래에서 진입 모듈을 찾도록 지정한다.

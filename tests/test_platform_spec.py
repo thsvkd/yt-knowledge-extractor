@@ -144,7 +144,12 @@ class TestGlobsAreMutuallyExclusive(unittest.TestCase):
         )
         self.assertEqual(
             self.osx.upload_globs("0.1.5"),
-            ("*-Setup.pkg", "*-0.1.5-osx-full.nupkg", "*-0.1.5-osx-delta.nupkg", "releases.osx.json"),
+            (
+                "*-Setup.pkg",
+                "*-0.1.5-osx-full.nupkg",
+                "*-0.1.5-osx-delta.nupkg",
+                "releases.osx.json",
+            ),
         )
 
     def test_nupkg_globs(self) -> None:

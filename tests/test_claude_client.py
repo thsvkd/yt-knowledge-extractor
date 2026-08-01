@@ -63,60 +63,78 @@ class TestComplete(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("--model") + 1], "claude-haiku-4-5-20251001")
         self.assertIn("--system-prompt", cmd)
         self.assertEqual(cmd[cmd.index("--system-prompt") + 1], "SYS PROMPT")
-        self.assertEqual(kwargs.get("input"), "USER MSG")  # user 는 stdin 으로 전달(인자 길이 제한 회피)
+        self.assertEqual(
+            kwargs.get("input"), "USER MSG"
+        )  # user 는 stdin 으로 전달(인자 길이 제한 회피)
 
     def test_truncation_warns_but_returns_text(self):
         payload = json.dumps({"result": "partial", "stop_reason": "max_tokens", "is_error": False})
-        with mock.patch.object(
-            claude_client.subprocess, "run", return_value=_completed(stdout=payload)
+        with (
+            mock.patch.object(
+                claude_client.subprocess, "run", return_value=_completed(stdout=payload)
+            ),
+            mock.patch("builtins.print") as mock_print,
         ):
-            with mock.patch("builtins.print") as mock_print:
-                out = self.client.complete("sys", "user", model="m")
+            out = self.client.complete("sys", "user", model="m")
         self.assertEqual(out, "partial")
         self.assertTrue(mock_print.called)
 
     def test_nonzero_exit_with_error_json_raises_with_result_detail(self):
         payload = json.dumps({"result": "model not found", "is_error": True})
-        with mock.patch.object(
-            claude_client.subprocess,
-            "run",
-            return_value=_completed(stdout=payload, returncode=1),
+        with (
+            mock.patch.object(
+                claude_client.subprocess,
+                "run",
+                return_value=_completed(stdout=payload, returncode=1),
+            ),
+            self.assertRaisesRegex(RuntimeError, "model not found"),
         ):
-            with self.assertRaisesRegex(RuntimeError, "model not found"):
-                self.client.complete("sys", "user", model="bogus")
+            self.client.complete("sys", "user", model="bogus")
 
     def test_nonzero_exit_with_unparsable_stdout_uses_stderr(self):
-        with mock.patch.object(
-            claude_client.subprocess,
-            "run",
-            return_value=_completed(stdout="not json", stderr="boom", returncode=2),
+        with (
+            mock.patch.object(
+                claude_client.subprocess,
+                "run",
+                return_value=_completed(stdout="not json", stderr="boom", returncode=2),
+            ),
+            self.assertRaisesRegex(RuntimeError, "boom"),
         ):
-            with self.assertRaisesRegex(RuntimeError, "boom"):
-                self.client.complete("sys", "user", model="m")
+            self.client.complete("sys", "user", model="m")
 
     def test_is_error_true_with_zero_exit_raises(self):
         payload = json.dumps({"result": "refused", "is_error": True})
-        with mock.patch.object(
-            claude_client.subprocess, "run", return_value=_completed(stdout=payload, returncode=0)
+        with (
+            mock.patch.object(
+                claude_client.subprocess,
+                "run",
+                return_value=_completed(stdout=payload, returncode=0),
+            ),
+            self.assertRaisesRegex(RuntimeError, "refused"),
         ):
-            with self.assertRaisesRegex(RuntimeError, "refused"):
-                self.client.complete("sys", "user", model="m")
+            self.client.complete("sys", "user", model="m")
 
     def test_unparsable_stdout_zero_exit_raises(self):
-        with mock.patch.object(
-            claude_client.subprocess, "run", return_value=_completed(stdout="garbage", returncode=0)
+        with (
+            mock.patch.object(
+                claude_client.subprocess,
+                "run",
+                return_value=_completed(stdout="garbage", returncode=0),
+            ),
+            self.assertRaises(RuntimeError),
         ):
-            with self.assertRaises(RuntimeError):
-                self.client.complete("sys", "user", model="m")
+            self.client.complete("sys", "user", model="m")
 
     def test_timeout_raises_runtime_error(self):
-        with mock.patch.object(
-            claude_client.subprocess,
-            "run",
-            side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=1),
+        with (
+            mock.patch.object(
+                claude_client.subprocess,
+                "run",
+                side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=1),
+            ),
+            self.assertRaises(RuntimeError),
         ):
-            with self.assertRaises(RuntimeError):
-                self.client.complete("sys", "user", model="m")
+            self.client.complete("sys", "user", model="m")
 
 
 if __name__ == "__main__":

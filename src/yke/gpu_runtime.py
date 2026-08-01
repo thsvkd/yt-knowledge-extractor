@@ -52,7 +52,9 @@ def _site_nvidia_bin_dirs() -> list[Path]:
     site = sysconfig.get_paths().get("purelib")
     if not site:
         return []
-    return [Path(p) for p in glob.glob(os.path.join(site, "nvidia", "*", "bin")) if os.path.isdir(p)]
+    return [
+        Path(p) for p in glob.glob(os.path.join(site, "nvidia", "*", "bin")) if os.path.isdir(p)
+    ]
 
 
 def nvidia_bin_dirs() -> list[Path]:

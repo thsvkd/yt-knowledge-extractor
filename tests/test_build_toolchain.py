@@ -123,7 +123,9 @@ class PruneExternalSymlinksTest(unittest.TestCase):
         self.outside = self.root / "outside"
         (self.outside / "cache").mkdir(parents=True)
         self.bundle = self.root / "app.app"
-        (self.bundle / "Contents" / "Frameworks" / "X.framework" / "Versions" / "A").mkdir(parents=True)
+        (self.bundle / "Contents" / "Frameworks" / "X.framework" / "Versions" / "A").mkdir(
+            parents=True
+        )
         (self.bundle / "Contents" / "MacOS").mkdir(parents=True)
         (self.bundle / "Contents" / "MacOS" / "app").write_text("bin")
 
@@ -136,9 +138,7 @@ class PruneExternalSymlinksTest(unittest.TestCase):
         것이다(실제로 겪음). 대상 코드는 macOS 전용이지만 테스트는 모든 OS 에서 돈다.
         """
         return {
-            p.relative_to(self.bundle).as_posix()
-            for p in self.bundle.rglob("*")
-            if p.is_symlink()
+            p.relative_to(self.bundle).as_posix() for p in self.bundle.rglob("*") if p.is_symlink()
         }
 
     def test_internal_relative_link_is_kept(self) -> None:

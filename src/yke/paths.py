@@ -20,7 +20,10 @@ _INVALID_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 # 윈도우 예약 장치 이름(대소문자 무관). 이 이름의 폴더는 만들 수 없다.
 _RESERVED_NAMES = {
-    "CON", "PRN", "AUX", "NUL",
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
     *(f"COM{i}" for i in range(1, 10)),
     *(f"LPT{i}" for i in range(1, 10)),
 }
@@ -57,10 +60,14 @@ def video_dir_name(video_id: str, title: str | None = None) -> str:
 
 def _has_outputs(p: Path) -> bool:
     """이 폴더에 이 영상의 산출물(메타/트랜스크립트)이 이미 들어 있는지."""
-    return any((p / name).exists() for name in ("meta.json", "transcript.raw.json", "transcript.json"))
+    return any(
+        (p / name).exists() for name in ("meta.json", "transcript.raw.json", "transcript.json")
+    )
 
 
-def find_video_dir(data_dir: Path | str, video_id: str, *, prefer: Path | None = None) -> Path | None:
+def find_video_dir(
+    data_dir: Path | str, video_id: str, *, prefer: Path | None = None
+) -> Path | None:
     """``data_dir`` 아래에서 이 영상의 기존 폴더를 찾는다(없으면 None).
 
     제목이 바뀌어도 ``[<영상ID>]`` 접미사로 찾을 수 있고, 예전 버전이 만든 ``<영상ID>``

@@ -88,7 +88,9 @@ def _latest_release_tag(*, include_drafts: bool = False) -> str | None:
     """
     proc = subprocess.run(
         ["gh", "release", "list", "--json", "tagName,isDraft,isPrerelease", "--limit", "100"],
-        cwd=REPO_ROOT, capture_output=True, text=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
     )
     if proc.returncode != 0:
         fail(f"gh release list 실패: {proc.stderr.strip()}")
@@ -111,7 +113,9 @@ def _release_assets(tag: str) -> list[str] | None:
     """
     proc = subprocess.run(
         ["gh", "release", "view", tag, "--json", "assets"],
-        cwd=REPO_ROOT, capture_output=True, text=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
     )
     if proc.returncode != 0:
         stderr = proc.stderr.strip()
@@ -132,7 +136,9 @@ def _tag_commit(tag: str) -> str | None:
     """
     proc = subprocess.run(
         ["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{tag}", "--jq", ".sha"],
-        cwd=REPO_ROOT, capture_output=True, text=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
     )
     if proc.returncode != 0:
         return None
@@ -142,7 +148,10 @@ def _tag_commit(tag: str) -> str | None:
 def _head_commit() -> str | None:
     """지금 체크아웃된 커밋 SHA. 확인할 수 없으면 ``None``."""
     proc = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True,
+        ["git", "rev-parse", "HEAD"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
     )
     if proc.returncode != 0:
         return None
@@ -152,7 +161,10 @@ def _head_commit() -> str | None:
 def _worktree_status() -> str | None:
     """``git status --porcelain`` 출력. 확인할 수 없으면 ``None``."""
     proc = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=REPO_ROOT, capture_output=True, text=True,
+        ["git", "status", "--porcelain"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
     )
     if proc.returncode != 0:
         return None
@@ -166,7 +178,9 @@ def _remote_has_commit(sha: str) -> bool:
     """
     proc = subprocess.run(
         ["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{sha}", "--jq", ".sha"],
-        cwd=REPO_ROOT, capture_output=True, text=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
     )
     return proc.returncode == 0 and bool(proc.stdout.strip())
 
@@ -229,7 +243,10 @@ def _commit_log_since(prev_tag: str | None) -> str:
     rev_range = f"{prev_tag}..HEAD" if prev_tag else "HEAD"
     proc = subprocess.run(
         ["git", "log", rev_range, "--no-merges", "--pretty=format:- %s%n%b%n---"],
-        cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8",
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
     )
     if proc.returncode != 0:
         fail(f"git log 실패: {proc.stderr.strip()}")
@@ -247,12 +264,17 @@ def generate_release_notes(prev_tag: str | None, tag: str, commit_log: str) -> s
         f"커밋 로그:\n{commit_log}\n"
     )
     cmd = [
-        "claude", "-p",
-        "--output-format", "json",
-        "--system-prompt", guide,
-        "--tools", "",
+        "claude",
+        "-p",
+        "--output-format",
+        "json",
+        "--system-prompt",
+        guide,
+        "--tools",
+        "",
         "--no-session-persistence",
-        "--setting-sources", "",
+        "--setting-sources",
+        "",
     ]
     info("릴리스 노트 생성 중 (claude -p)…")
     try:
@@ -291,7 +313,7 @@ def generate_release_notes(prev_tag: str | None, tag: str, commit_log: str) -> s
 class ReleasePlan:
     """이번 실행이 릴리스를 새로 만들지(create), 에셋만 얹을지(append) 정한 결과."""
 
-    mode: str            # "create" | "append"
+    mode: str  # "create" | "append"
     generate_notes: bool
     error: str | None = None
 
@@ -510,7 +532,9 @@ def main() -> int:
     else:
         # 두 번째 플랫폼 실행. 커밋 로그는 계산조차 하지 않는다 — 같은 태그 이후 커밋은
         # 0개라 "릴리스할 변경사항이 없습니다" 로 무조건 죽는다.
-        info(f"{tag} 릴리스가 이미 있습니다 → 릴리스 노트는 그대로 두고 {spec.channel} 에셋만 추가합니다.")
+        info(
+            f"{tag} 릴리스가 이미 있습니다 → 릴리스 노트는 그대로 두고 {spec.channel} 에셋만 추가합니다."
+        )
 
     out_dir = platform_spec.VELOPACK_OUT
 
@@ -551,8 +575,17 @@ def main() -> int:
         # --target 으로 태그를 **방금 빌드한 커밋**에 고정한다. 넘기지 않으면 gh 는 원격
         # 기본 브랜치의 tip 에 태그를 만드는데, 그 사이 다른 커밋이 올라와 있으면 태그가
         # 배포된 산출물과 다른 코드를 가리킨다(위 check_head_pushed 참고).
-        create_cmd = ["gh", "release", "create", tag, *asset_args,
-                      "--title", tag, "--notes-file", str(notes_path)]
+        create_cmd = [
+            "gh",
+            "release",
+            "create",
+            tag,
+            *asset_args,
+            "--title",
+            tag,
+            "--notes-file",
+            str(notes_path),
+        ]
         if head_commit:
             create_cmd += ["--target", head_commit]
         # **기본은 draft.** 한쪽 OS 만 올라간 상태로 공개하면 다른 OS 사용자는 받을 파일이

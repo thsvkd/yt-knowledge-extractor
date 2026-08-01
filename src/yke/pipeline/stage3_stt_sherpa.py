@@ -164,12 +164,16 @@ def _ensure_model(model_name: str, *, log: Callable[[str], None]) -> Path:
         log(f"  sherpa-onnx 모델 압축 해제 중: {model_name}...")
         _extract(archive, root)
     except Exception as exc:
-        raise RuntimeError(f"sherpa-onnx 모델 다운로드/압축 해제 실패({model_name}): {exc}") from exc
+        raise RuntimeError(
+            f"sherpa-onnx 모델 다운로드/압축 해제 실패({model_name}): {exc}"
+        ) from exc
     finally:
         archive.unlink(missing_ok=True)
 
     if not model_dir.exists():
-        raise RuntimeError(f"sherpa-onnx 모델 압축 해제 후 디렉터리를 찾을 수 없습니다: {model_dir}")
+        raise RuntimeError(
+            f"sherpa-onnx 모델 압축 해제 후 디렉터리를 찾을 수 없습니다: {model_dir}"
+        )
     return model_dir
 
 
@@ -255,8 +259,17 @@ def _convert_to_wav(audio_path: Path, out_path: Path) -> None:
 
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     cmd = [
-        ffmpeg, "-y", "-i", str(audio_path),
-        "-ac", "1", "-ar", str(_SAMPLE_RATE), "-f", "wav", str(out_path),
+        ffmpeg,
+        "-y",
+        "-i",
+        str(audio_path),
+        "-ac",
+        "1",
+        "-ar",
+        str(_SAMPLE_RATE),
+        "-f",
+        "wav",
+        str(out_path),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -313,7 +326,9 @@ def _decode(
     window = vad.config.silero_vad.window_size
     chunk_frames = int(_SAMPLE_RATE * _READ_CHUNK_SECONDS)
 
-    wf = wave.open(str(wav_path), "rb")
+    # noqa 인 이유: 아래 try/finally 가 wf.close() 를 보장한다. with 로 바꾸려면 이 함수의
+    # 긴 try 블록을 통째로 한 단계 더 들여써야 해서, 얻는 것에 비해 diff 가 크다.
+    wf = wave.open(str(wav_path), "rb")  # noqa: SIM115
     try:
         rate = wf.getframerate()
         duration = wf.getnframes() / rate if rate else 0.0

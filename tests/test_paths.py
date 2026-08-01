@@ -15,7 +15,9 @@ from yke.paths import VideoPaths, find_video_dir, sanitize_folder_name, video_di
 
 class TestSanitizeFolderName(unittest.TestCase):
     def test_keeps_korean_and_spaces(self) -> None:
-        self.assertEqual(sanitize_folder_name("유튜브 알고리즘 완전정복"), "유튜브 알고리즘 완전정복")
+        self.assertEqual(
+            sanitize_folder_name("유튜브 알고리즘 완전정복"), "유튜브 알고리즘 완전정복"
+        )
 
     def test_replaces_invalid_chars(self) -> None:
         # 윈도우 금지 문자(\/:*?"<>|)는 공백으로 바뀌고 연속 공백은 하나로 접힌다.

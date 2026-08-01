@@ -29,9 +29,7 @@ class TestIsChannelOrPlaylist(unittest.TestCase):
             self.assertTrue(is_channel_or_playlist_url(url), url)
 
     def test_playlists_are_true(self):
-        self.assertTrue(
-            is_channel_or_playlist_url("https://www.youtube.com/playlist?list=PLabc")
-        )
+        self.assertTrue(is_channel_or_playlist_url("https://www.youtube.com/playlist?list=PLabc"))
 
     def test_watch_with_list_is_individual(self):
         # 영상+재생목록이 섞이면 개별 영상으로 본다(watch 우선).

@@ -25,8 +25,9 @@ class TestGetKey(unittest.TestCase):
     def test_falls_back_to_keyring(self) -> None:
         fake = mock.Mock()
         fake.get_password.return_value = " kr-key "
-        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.dict(
-            "sys.modules", {"keyring": fake}
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch.dict("sys.modules", {"keyring": fake}),
         ):
             self.assertEqual(credentials.get_gemini_api_key(), "kr-key")
         fake.get_password.assert_called_once()
@@ -34,15 +35,17 @@ class TestGetKey(unittest.TestCase):
     def test_none_when_nothing_set(self) -> None:
         fake = mock.Mock()
         fake.get_password.return_value = None
-        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.dict(
-            "sys.modules", {"keyring": fake}
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch.dict("sys.modules", {"keyring": fake}),
         ):
             self.assertIsNone(credentials.get_gemini_api_key())
 
     def test_keyring_import_failure_is_safe(self) -> None:
         # keyring 이 아예 없거나 백엔드 오류여도 앱이 죽지 않고 None 으로 폴백한다.
-        with mock.patch.dict(os.environ, {}, clear=True), mock.patch(
-            "builtins.__import__", side_effect=ImportError("no keyring")
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch("builtins.__import__", side_effect=ImportError("no keyring")),
         ):
             self.assertIsNone(credentials.get_gemini_api_key())
 
@@ -135,8 +138,9 @@ class TestWindowsSizeLimit(unittest.TestCase):
 
     def test_normal_key_passes_on_windows(self) -> None:
         fake = mock.MagicMock()
-        with mock.patch.object(credentials.sys, "platform", "win32"), mock.patch.dict(
-            "sys.modules", {"keyring": fake}
+        with (
+            mock.patch.object(credentials.sys, "platform", "win32"),
+            mock.patch.dict("sys.modules", {"keyring": fake}),
         ):
             credentials.set_gemini_api_key("AIzaSy" + "x" * 33)
         fake.set_password.assert_called_once()
@@ -145,8 +149,9 @@ class TestWindowsSizeLimit(unittest.TestCase):
         """macOS 키체인에는 이 한도가 없다 — 공연히 막지 않는다."""
         huge = "k" * (credentials._WINDOWS_CRED_MAX_BYTES // 2 + 1)
         fake = mock.MagicMock()
-        with mock.patch.object(credentials.sys, "platform", "darwin"), mock.patch.dict(
-            "sys.modules", {"keyring": fake}
+        with (
+            mock.patch.object(credentials.sys, "platform", "darwin"),
+            mock.patch.dict("sys.modules", {"keyring": fake}),
         ):
             credentials.set_gemini_api_key(huge)
         fake.set_password.assert_called_once()

@@ -61,7 +61,9 @@ from _common import REPO_ROOT, fail, info
 
 # flet 이 릴리스마다 올리는 공식 빌드 템플릿(zip). flet_cli 가 쓰는 것과 같은 파일이라
 # 버전만 맞추면 기본 빌드와 동일한 결과가 나온다.
-_TEMPLATE_URL = "https://github.com/flet-dev/flet/releases/download/v{version}/flet-build-template.zip"
+_TEMPLATE_URL = (
+    "https://github.com/flet-dev/flet/releases/download/v{version}/flet-build-template.zip"
+)
 # zip 최상위는 cookiecutter.json 이 들어 있는 디렉터리 하나(build/)다. `--template` 에는
 # 이 디렉터리를 넘겨야 한다.
 _TEMPLATE_ROOT = "build"
@@ -155,6 +157,7 @@ def _hook_patch(targets: list[str]) -> str:
     lines = "\n".join(_CRED_DELETE_LINE.replace("{target}", t) for t in targets)
     return _HOOK_ANCHOR + _HOOK_PATCH_TEMPLATE.replace("{targets}", lines)
 
+
 _SIZE_ANCHOR = "  Win32Window::Size size(1280, 720);"
 _SIZE_PATCH = "  Win32Window::Size size({width}, {height});"
 
@@ -164,7 +167,9 @@ _SIZE_PATCH = "  Win32Window::Size size({width}, {height});"
 # ``width="800" height="600"`` 이 두 번 나오고, 그것만으로 앵커를 잡으면 _replace_once 가
 # ValueError 로 빌드를 죽인다(실측 확인).
 _XIB_CONTENT_RECT_ANCHOR = '<rect key="contentRect" x="335" y="390" width="800" height="600"/>'
-_XIB_CONTENT_RECT_PATCH = '<rect key="contentRect" x="335" y="390" width="{width}" height="{height}"/>'
+_XIB_CONTENT_RECT_PATCH = (
+    '<rect key="contentRect" x="335" y="390" width="{width}" height="{height}"/>'
+)
 _XIB_FRAME_ANCHOR = '<rect key="frame" x="0.0" y="0.0" width="800" height="600"/>'
 _XIB_FRAME_PATCH = '<rect key="frame" x="0.0" y="0.0" width="{width}" height="{height}"/>'
 
@@ -286,7 +291,11 @@ def prepare(flet_version: str) -> Path:
     stamp = root / ".yke-patch"
     key = f"{_PATCH_REVISION}|{width}x{height}|{'|'.join(targets)}"
 
-    if template_dir.is_dir() and stamp.is_file() and stamp.read_text(encoding="utf-8").strip() == key:
+    if (
+        template_dir.is_dir()
+        and stamp.is_file()
+        and stamp.read_text(encoding="utf-8").strip() == key
+    ):
         info(f"패치된 flet 템플릿 재사용: {template_dir}")
         return template_dir
 

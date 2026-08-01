@@ -84,20 +84,46 @@ def unplayable_reason(availability: str | None) -> tuple[str, str] | None:
 
 # 메시지(소문자)에 이 마커가 있으면 해당 사유로 분류한다. 위에서부터 우선 매칭.
 _FAILURE_MARKERS: list[tuple[tuple[str, ...], str, str]] = [
-    (("members-only", "members only", "join this channel", "channel's members"),
-     "members_only", "멤버 전용 영상"),
-    (("private video", "this video is private", "video is private"),
-     "private", "비공개 영상"),
+    (
+        ("members-only", "members only", "join this channel", "channel's members"),
+        "members_only",
+        "멤버 전용 영상",
+    ),
+    (("private video", "this video is private", "video is private"), "private", "비공개 영상"),
     (("premium", "youtube premium"), "premium_only", "프리미엄 전용 영상"),
-    (("not available in your country", "not available in your", "isn't available in your",
-      "georestrict", "geo restrict", "geo-restrict", "blocked it in your country"),
-     "geo_blocked", "지역 제한 영상"),
-    (("age-restrict", "age restrict", "confirm your age", "inappropriate for some"),
-     "age_restricted", "연령 제한 영상"),
-    (("has been removed", "no longer available", "removed by the uploader",
-      "account associated with this video has been terminated", "video has been removed",
-      "video unavailable", "deleted", "not available", "unavailable"),
-     "removed", "삭제되었거나 이용할 수 없는 영상"),
+    (
+        (
+            "not available in your country",
+            "not available in your",
+            "isn't available in your",
+            "georestrict",
+            "geo restrict",
+            "geo-restrict",
+            "blocked it in your country",
+        ),
+        "geo_blocked",
+        "지역 제한 영상",
+    ),
+    (
+        ("age-restrict", "age restrict", "confirm your age", "inappropriate for some"),
+        "age_restricted",
+        "연령 제한 영상",
+    ),
+    (
+        (
+            "has been removed",
+            "no longer available",
+            "removed by the uploader",
+            "account associated with this video has been terminated",
+            "video has been removed",
+            "video unavailable",
+            "deleted",
+            "not available",
+            "unavailable",
+        ),
+        "removed",
+        "삭제되었거나 이용할 수 없는 영상",
+    ),
     (("sign in to confirm", "not a bot", "bot"), "auth_or_bot", "로그인/봇 확인이 필요"),
 ]
 
@@ -382,5 +408,7 @@ def download_audio(
     _download(opts, url, log=log)
     audio = vpaths.audio()
     if audio is None:
-        raise RuntimeError(f"[{vpaths.video_id}] 오디오 다운로드 후에도 오디오 파일을 찾을 수 없습니다.")
+        raise RuntimeError(
+            f"[{vpaths.video_id}] 오디오 다운로드 후에도 오디오 파일을 찾을 수 없습니다."
+        )
     return audio

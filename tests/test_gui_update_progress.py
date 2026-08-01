@@ -112,7 +112,7 @@ class TestVelopackCheckpoints(unittest.TestCase):
         at_70 = g._update_shown
         after_5s = _tick(g, int(5 / gui._UPDATE_TICK_SECONDS))
         after_30s = _tick(g, int(25 / gui._UPDATE_TICK_SECONDS))
-        self.assertGreater(after_5s, at_70 + 1.0)   # 5초만 지나도 눈에 띄게 올라간다
+        self.assertGreater(after_5s, at_70 + 1.0)  # 5초만 지나도 눈에 띄게 올라간다
         self.assertGreater(after_30s, after_5s)
         self.assertLess(after_30s, 100.0)
 

@@ -44,8 +44,14 @@ def _chunk(segments: list[Segment], max_chars: int) -> list[str]:
 
 # LLM 이 한국어/대문자 등으로 type 을 낼 수 있어 표준값으로 정규화한다.
 _TYPE_MAP = {
-    "fact": "fact", "opinion": "opinion", "tip": "tip", "definition": "definition",
-    "사실": "fact", "의견": "opinion", "팁": "tip", "정의": "definition",
+    "fact": "fact",
+    "opinion": "opinion",
+    "tip": "tip",
+    "definition": "definition",
+    "사실": "fact",
+    "의견": "opinion",
+    "팁": "tip",
+    "정의": "definition",
 }
 
 
@@ -63,9 +69,7 @@ def extract_units(segments, video_id: str, llm_cfg, client) -> list[KnowledgeUni
     skipped = 0
     chunks = _chunk(segments, llm_cfg.max_chars_per_chunk)
     for idx, chunk in enumerate(chunks, 1):
-        user = (
-            f"다음은 영상 트랜스크립트의 일부입니다. 지식 원자 단위를 JSON 배열로 추출하세요.\n\n{chunk}"
-        )
+        user = f"다음은 영상 트랜스크립트의 일부입니다. 지식 원자 단위를 JSON 배열로 추출하세요.\n\n{chunk}"
         try:
             text = client.complete(_SYSTEM, user, model=llm_cfg.model)
         except Exception as exc:  # 한 청크 실패가 전체 추출을 무너뜨리지 않도록

@@ -27,8 +27,10 @@ class TestIsAvailable(unittest.TestCase):
     def test_needs_both_sdk_and_key(self) -> None:
         cases = [(True, True, True), (True, False, False), (False, True, False)]
         for sdk, key, expected in cases:
-            with mock.patch.object(gemini_client, "genai_available", return_value=sdk), \
-                 mock.patch.object(gemini_client, "has_gemini_api_key", return_value=key):
+            with (
+                mock.patch.object(gemini_client, "genai_available", return_value=sdk),
+                mock.patch.object(gemini_client, "has_gemini_api_key", return_value=key),
+            ):
                 self.assertEqual(gemini_client.is_available(), expected, (sdk, key))
 
 
@@ -107,12 +109,16 @@ class TestListGenerateModels(unittest.TestCase):
             self._model("models/gemini-3-pro", ["generateContent"], display="Gemini 3 Pro"),
             self._model("models/text-embedding-004", ["embedContent"]),  # 비 gemini
             self._model("models/gemini-embedding-001", ["embedContent"]),  # 임베딩 제외
-            self._model("models/gemini-1.5-pro", None, display="Gemini 1.5 Pro"),  # actions 없음 → 포함
+            self._model(
+                "models/gemini-1.5-pro", None, display="Gemini 1.5 Pro"
+            ),  # actions 없음 → 포함
             self._model("models/gemini-2.0-flash", ["countTokens"]),  # generateContent 미지원 제외
         ]
-        with mock.patch.object(gemini_client, "is_available", return_value=True), \
-             mock.patch.object(gemini_client, "get_gemini_api_key", return_value="k"), \
-             mock.patch("google.genai.Client", return_value=fake_client):
+        with (
+            mock.patch.object(gemini_client, "is_available", return_value=True),
+            mock.patch.object(gemini_client, "get_gemini_api_key", return_value="k"),
+            mock.patch("google.genai.Client", return_value=fake_client),
+        ):
             out = gemini_client.list_generate_models()
         self.assertEqual(
             out,
@@ -124,9 +130,11 @@ class TestListGenerateModels(unittest.TestCase):
         )
 
     def test_exception_returns_empty(self) -> None:
-        with mock.patch.object(gemini_client, "is_available", return_value=True), \
-             mock.patch.object(gemini_client, "get_gemini_api_key", return_value="k"), \
-             mock.patch("google.genai.Client", side_effect=RuntimeError("net down")):
+        with (
+            mock.patch.object(gemini_client, "is_available", return_value=True),
+            mock.patch.object(gemini_client, "get_gemini_api_key", return_value="k"),
+            mock.patch("google.genai.Client", side_effect=RuntimeError("net down")),
+        ):
             self.assertEqual(gemini_client.list_generate_models(), [])
 
 
@@ -138,14 +146,18 @@ class TestResolveAliases(unittest.TestCase):
     def test_resolves_concrete_name(self) -> None:
         def _get(model):
             m = mock.Mock(version=None)
-            m.name = "models/gemini-3.6-flash" if model == "gemini-flash-latest" else "models/" + model
+            m.name = (
+                "models/gemini-3.6-flash" if model == "gemini-flash-latest" else "models/" + model
+            )
             return m
 
         fake = mock.Mock()
         fake.models.get.side_effect = _get
-        with mock.patch.object(gemini_client, "is_available", return_value=True), \
-             mock.patch.object(gemini_client, "get_gemini_api_key", return_value="k"), \
-             mock.patch("google.genai.Client", return_value=fake):
+        with (
+            mock.patch.object(gemini_client, "is_available", return_value=True),
+            mock.patch.object(gemini_client, "get_gemini_api_key", return_value="k"),
+            mock.patch("google.genai.Client", return_value=fake),
+        ):
             out = gemini_client.resolve_aliases(("gemini-flash-latest",))
         self.assertEqual(out, {"gemini-flash-latest": "gemini-3.6-flash"})
 
@@ -156,18 +168,22 @@ class TestResolveAliases(unittest.TestCase):
         m.name = "models/gemini-flash-latest"
         fake = mock.Mock()
         fake.models.get.return_value = m
-        with mock.patch.object(gemini_client, "is_available", return_value=True), \
-             mock.patch.object(gemini_client, "get_gemini_api_key", return_value="k"), \
-             mock.patch("google.genai.Client", return_value=fake):
+        with (
+            mock.patch.object(gemini_client, "is_available", return_value=True),
+            mock.patch.object(gemini_client, "get_gemini_api_key", return_value="k"),
+            mock.patch("google.genai.Client", return_value=fake),
+        ):
             out = gemini_client.resolve_aliases(("gemini-flash-latest",))
         self.assertEqual(out, {})
 
     def test_skips_unresolvable_alias(self) -> None:
         fake = mock.Mock()
         fake.models.get.side_effect = RuntimeError("404")
-        with mock.patch.object(gemini_client, "is_available", return_value=True), \
-             mock.patch.object(gemini_client, "get_gemini_api_key", return_value="k"), \
-             mock.patch("google.genai.Client", return_value=fake):
+        with (
+            mock.patch.object(gemini_client, "is_available", return_value=True),
+            mock.patch.object(gemini_client, "get_gemini_api_key", return_value="k"),
+            mock.patch("google.genai.Client", return_value=fake),
+        ):
             out = gemini_client.resolve_aliases(("gemini-flash-latest",))
         self.assertEqual(out, {})
 

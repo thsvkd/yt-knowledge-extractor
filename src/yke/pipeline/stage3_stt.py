@@ -30,6 +30,7 @@ cpu_threads 를 물리 코어 수로 명시하면 위 배치 최적화 위에 �
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 from collections.abc import Callable
@@ -103,10 +104,8 @@ def _register_cuda_dll_dirs() -> list[str]:
     for bindir_path in all_nvidia_bin_dirs():
         bindir = str(bindir_path)
         # add_dll_directory: 파이썬이 로드하는 확장모듈의 의존성 해석용
-        try:
+        with contextlib.suppress(OSError):
             os.add_dll_directory(bindir)
-        except OSError:
-            pass
         # PATH: ctranslate2 가 LoadLibrary("cublas64_12.dll") 를 표준 검색순서로 호출하므로,
         # 그 검색에 걸리도록 PATH 앞에 추가한다 (핵심).
         if bindir not in os.environ.get("PATH", ""):
@@ -297,13 +296,11 @@ def transcribe(
             raise
         # 로그 실패(예: cp949 콘솔로 리다이렉트된 CLI 에서 인코딩 불가 문자)가 이 아래의
         # CPU 폴백을 무산시키지 않도록 보호한다. 메시지도 cp949 안전 문자만 쓴다(이모지 금지).
-        try:
+        with contextlib.suppress(Exception):
             log(
                 f"  주의: GPU STT 실패 → CPU 로 폴백합니다. 큰 모델은 CPU 에서 매우 느릴 수 있습니다 "
                 f"({type(exc).__name__}: {exc})"
             )
-        except Exception:
-            pass
         _model_cache.pop((model_name, device, compute_type, cpu_threads), None)
 
     # 2차: CPU int8 폴백. model="auto" 면 CPU 기본(small)으로 다시 확정해

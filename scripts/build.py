@@ -129,9 +129,17 @@ def flet_version() -> str:
     값을 써야 하므로, pyproject 의 핀을 파싱하지 않고 동기화된 환경에서 직접 읽는다.
     """
     result = subprocess.run(
-        ["uv", "run", "--no-sync", "python", "-c",
-         "import flet.version as v; print(v.flet_version)"],
-        cwd=REPO_ROOT, capture_output=True, text=True,
+        [
+            "uv",
+            "run",
+            "--no-sync",
+            "python",
+            "-c",
+            "import flet.version as v; print(v.flet_version)",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
     )
     version = result.stdout.strip()
     if result.returncode != 0 or not version:
@@ -158,9 +166,17 @@ def ensure_windows_toolchain() -> None:
     vswhere = _vswhere_path()
     if vswhere.exists():
         result = subprocess.run(
-            [str(vswhere), "-products", "*", "-requires", _VC_TOOLS_COMPONENT,
-             "-property", "installationPath"],
-            capture_output=True, text=True,
+            [
+                str(vswhere),
+                "-products",
+                "*",
+                "-requires",
+                _VC_TOOLS_COMPONENT,
+                "-property",
+                "installationPath",
+            ],
+            capture_output=True,
+            text=True,
         )
         if result.stdout.strip():
             info("Visual Studio C++ 빌드 도구 확인됨")
@@ -169,7 +185,7 @@ def ensure_windows_toolchain() -> None:
         "Visual Studio C++ 빌드 도구('Desktop development with C++')가 필요합니다.\n"
         "  https://visualstudio.microsoft.com/downloads/ 에서 Build Tools 를 설치하거나\n"
         "  winget install --id Microsoft.VisualStudio.2022.BuildTools \\\n"
-        "    --override \"--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --includeRecommended --passive\""
+        '    --override "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --includeRecommended --passive"'
     )
 
 
@@ -254,9 +270,17 @@ def _vc_redist_x64_dir() -> Path:
     """VS 설치에서 가장 최신인 x64 VC 런타임 재배포 폴더를 찾는다."""
     vswhere = _vswhere_path()
     result = subprocess.run(
-        [str(vswhere), "-products", "*", "-requires", _VC_TOOLS_COMPONENT,
-         "-property", "installationPath"],
-        capture_output=True, text=True,
+        [
+            str(vswhere),
+            "-products",
+            "*",
+            "-requires",
+            _VC_TOOLS_COMPONENT,
+            "-property",
+            "installationPath",
+        ],
+        capture_output=True,
+        text=True,
     )
     paths = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     if not paths:
@@ -324,8 +348,7 @@ def verify_vc_runtime_arch(bundle_dir: Path) -> None:
     wrong = [
         f"{name}({'없음' if not (bundle_dir / name).exists() else '32비트'})"
         for name in _VC_RUNTIME_DLLS
-        if not (bundle_dir / name).exists()
-        or _pe_machine(bundle_dir / name) != _PE_MACHINE_AMD64
+        if not (bundle_dir / name).exists() or _pe_machine(bundle_dir / name) != _PE_MACHINE_AMD64
     ]
     if wrong:
         fail(f"번들의 VC 런타임이 x64 가 아닙니다: {', '.join(wrong)}")
@@ -363,11 +386,18 @@ def verify_artifact(dst: Path, target: str) -> None:
         app = macos_app_bundle(dst)
         exe = app / "Contents" / "MacOS" / platform_spec.spec_for("macos").main_exe
         if not exe.is_file():
-            listing = ", ".join(sorted(p.name for p in (app / "Contents" / "MacOS").glob("*"))) or "(비어 있음)"
-            fail(f"{exe} 가 없습니다. Contents/MacOS 실제 내용: {listing}\n"
-                 "vpk --mainExe 는 이 이름을 그대로 찾으므로 이대로는 패키징이 실패합니다.")
+            listing = (
+                ", ".join(sorted(p.name for p in (app / "Contents" / "MacOS").glob("*")))
+                or "(비어 있음)"
+            )
+            fail(
+                f"{exe} 가 없습니다. Contents/MacOS 실제 내용: {listing}\n"
+                "vpk --mainExe 는 이 이름을 그대로 찾으므로 이대로는 패키징이 실패합니다."
+            )
         if not os.access(exe, os.X_OK):
-            fail(f"{exe} 에 실행 권한이 없습니다(번들이 깨졌거나 압축/복사 과정에서 권한이 날아갔습니다).")
+            fail(
+                f"{exe} 에 실행 권한이 없습니다(번들이 깨졌거나 압축/복사 과정에서 권한이 날아갔습니다)."
+            )
         info(f"완료(앱 번들): {app}")
     else:
         if not any(dst.iterdir()):
@@ -498,24 +528,45 @@ def velopack_pack(pack_dir: Path, version: str, spec: platform_spec.PlatformSpec
     # 1) 기존 릴리스를 받아 델타 기준으로 삼는다. 첫 릴리스/네트워크 실패면 건너뛴다.
     info("기존 Velopack 릴리스 조회(델타 기준)…")
     dl = subprocess.run(
-        [vpk, "download", "github", "--repoUrl", platform_spec.REPO_URL,
-         "--outputDir", str(out), "--channel", spec.channel],
-        cwd=REPO_ROOT, capture_output=True, text=True, env=env,
+        [
+            vpk,
+            "download",
+            "github",
+            "--repoUrl",
+            platform_spec.REPO_URL,
+            "--outputDir",
+            str(out),
+            "--channel",
+            spec.channel,
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        env=env,
     )
     if dl.returncode != 0:
         info("  기존 릴리스 없음/조회 실패 → 전체 릴리스로 진행(델타 없음).")
 
     # 2) 패키징(+서명)
     cmd = [
-        vpk, "pack",
-        "--packId", platform_spec.PACK_ID,
-        "--packVersion", version,
-        "--packDir", str(pack_dir),
-        "--mainExe", spec.main_exe,
-        "--packTitle", platform_spec.PRODUCT,
-        "--packAuthors", platform_spec.PACK_AUTHORS,
-        "--channel", spec.channel,
-        "--outputDir", str(out),
+        vpk,
+        "pack",
+        "--packId",
+        platform_spec.PACK_ID,
+        "--packVersion",
+        version,
+        "--packDir",
+        str(pack_dir),
+        "--mainExe",
+        spec.main_exe,
+        "--packTitle",
+        platform_spec.PRODUCT,
+        "--packAuthors",
+        platform_spec.PACK_AUTHORS,
+        "--channel",
+        spec.channel,
+        "--outputDir",
+        str(out),
     ]
     if sign_params:
         cmd += ["--signParams", sign_params]
@@ -548,20 +599,26 @@ def verify_velopack_output(out: Path, spec: platform_spec.PlatformSpec, version:
 
     델타(*-delta.nupkg)는 첫 릴리스에 없으므로 검사하지 않는다.
     """
+
     def listing() -> str:
         names = sorted(p.name for p in out.glob("*"))
         return "\n  ".join(names) if names else "(비어 있음)"
 
     if not list(out.glob(spec.setup_glob)):
-        fail(f"Velopack 설치기({spec.setup_glob})를 찾지 못했습니다.\n"
-             f"{out} 실제 내용:\n  {listing()}")
+        fail(
+            f"Velopack 설치기({spec.setup_glob})를 찾지 못했습니다.\n"
+            f"{out} 실제 내용:\n  {listing()}"
+        )
     if not (out / spec.releases_json).is_file():
-        fail(f"업데이트 피드 {spec.releases_json} 이 없습니다(채널={spec.channel}).\n"
-             f"{out} 실제 내용:\n  {listing()}")
+        fail(
+            f"업데이트 피드 {spec.releases_json} 이 없습니다(채널={spec.channel}).\n"
+            f"{out} 실제 내용:\n  {listing()}"
+        )
     full_glob = spec.nupkg_globs(version)[0]
     if not list(out.glob(full_glob)):
-        fail(f"전체 업데이트 패키지({full_glob})를 찾지 못했습니다.\n"
-             f"{out} 실제 내용:\n  {listing()}")
+        fail(
+            f"전체 업데이트 패키지({full_glob})를 찾지 못했습니다.\n{out} 실제 내용:\n  {listing()}"
+        )
     info(f"Velopack 산출물 검증 통과(채널={spec.channel}, 버전={version}).")
 
 
@@ -604,8 +661,10 @@ def main() -> int:
     # flet build(수 분) + vpk pack 까지 다 성공한 뒤 마지막에 uv pip install 이 실패해
     # (nvidia-cublas-cu12 는 macOS 휠이 없다) 설치기는 멀쩡한데 종료 코드만 1 이 된다.
     if args.gpu_runtime and target != "windows":
-        fail("--gpu-runtime 은 Windows 전용입니다 — cuBLAS(nvidia-cublas-cu12)는 "
-             f"Windows DLL 이라 {target} 용 휠이 없습니다.")
+        fail(
+            "--gpu-runtime 은 Windows 전용입니다 — cuBLAS(nvidia-cublas-cu12)는 "
+            f"Windows DLL 이라 {target} 용 휠이 없습니다."
+        )
 
     if target == "windows":
         ensure_windows_toolchain()
@@ -630,8 +689,18 @@ def main() -> int:
     info("의존성 동기화 (uv sync)")
     check(["uv", "sync"])
 
-    build_cmd = ["uv", "run", "--no-sync", "flet", "build", target,
-                 "--product", platform_spec.PRODUCT, "--org", _ORG]
+    build_cmd = [
+        "uv",
+        "run",
+        "--no-sync",
+        "flet",
+        "build",
+        target,
+        "--product",
+        platform_spec.PRODUCT,
+        "--org",
+        _ORG,
+    ]
     if target in ("windows", "macos"):
         # 네이티브 러너(Windows/macOS) 진입점을 패치한 템플릿으로 빌드한다 — Velopack 설치
         # 훅 처리(Windows 만 해당)와 첫 창 크기(시작 시 크기가 바뀌는 깜빡임 제거, 양쪽 공통).

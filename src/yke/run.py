@@ -81,9 +81,7 @@ def _caption_is_usable(
     """
     if len(segs) < min_segments:
         return False
-    if min_coverage > 0 and _caption_coverage(segs, duration) < min_coverage:
-        return False
-    return True
+    return not (min_coverage > 0 and _caption_coverage(segs, duration) < min_coverage)
 
 
 # --- 진행 이벤트 / 결과 모델 -------------------------------------------------
@@ -316,7 +314,9 @@ def _resolve_sources(
             found = stage1_ingest.expand_source(
                 src,
                 channel_limit,
-                log=lambda m: on_progress(Progress(message=m, phase="transcript", substep="resolve")),
+                log=lambda m: on_progress(
+                    Progress(message=m, phase="transcript", substep="resolve")
+                ),
             )
         except Exception as exc:
             on_progress(
@@ -423,7 +423,9 @@ def _write_merged_transcript(
         for i, (vid, segs) in enumerate(transcripts.items(), start=1)
     )
     path = out_dir / filename
-    path.write_text(f"# 전체 트랜스크립트 합본 ({kind}) — 영상 {total}개\n\n{body}", encoding="utf-8")
+    path.write_text(
+        f"# 전체 트랜스크립트 합본 ({kind}) — 영상 {total}개\n\n{body}", encoding="utf-8"
+    )
     return path
 
 
@@ -462,7 +464,13 @@ def build_transcript(
     def _substep(name: str, message: str) -> None:
         log(message)
         on_progress(
-            Progress(message=message, phase="transcript", substep=name, indeterminate=True, transient=True)
+            Progress(
+                message=message,
+                phase="transcript",
+                substep=name,
+                indeterminate=True,
+                transient=True,
+            )
         )
 
     # 완전 캐시된 경우 URL 에서 id 를 뽑아 네트워크 조회 없이 로딩(오프라인 재실행 가능)
@@ -504,7 +512,11 @@ def build_transcript(
         reason = (
             "강제 로컬 STT(자막 무시)"
             if subs.stt_first
-            else ("자막 폴백: " + ", ".join(fallback_reasons) if fallback_reasons else "자막 사용 불가")
+            else (
+                "자막 폴백: " + ", ".join(fallback_reasons)
+                if fallback_reasons
+                else "자막 사용 불가"
+            )
         )
         log(f"[{vid}] 로컬 STT 로 폴백 — 사유: {reason}")
         _substep("stt", f"[{vid}] 오디오 다운로드 중… ({reason})")
@@ -516,7 +528,9 @@ def build_transcript(
         try:
             engine = cfg.stt.engine
             engine_desc = (
-                cfg.stt.model if engine == "faster-whisper" else f"sherpa/{cfg.stt.sherpa_model_size}"
+                cfg.stt.model
+                if engine == "faster-whisper"
+                else f"sherpa/{cfg.stt.sherpa_model_size}"
             )
             _substep("stt", f"[{vid}] STT 실행 ({engine} {engine_desc})...")
             segs = stage3_stt.transcribe(
@@ -580,7 +594,9 @@ def build_transcript(
         if not meta.get("auto_sub_lang"):
             fallback_reasons.append("유튜브 자동자막 없음")
             return None
-        _substep("subtitles", f"[{vid}] 유튜브 자동자막 다운로드 중… (lang={meta['auto_sub_lang']})")
+        _substep(
+            "subtitles", f"[{vid}] 유튜브 자동자막 다운로드 중… (lang={meta['auto_sub_lang']})"
+        )
         sub = stage1_ingest.download_auto_subtitle(url, vp, meta["auto_sub_lang"], log=log)
         if not sub:
             fallback_reasons.append("자동자막 다운로드 실패")
@@ -1098,10 +1114,8 @@ def main() -> None:
     # 죽지 않도록 대체 출력으로 바꾼다(한글은 cp949 로 그대로 나가고, 불가 문자만 대체).
     import sys
 
-    try:
+    with contextlib.suppress(Exception):
         sys.stdout.reconfigure(errors="replace")
-    except Exception:
-        pass
 
     ap = argparse.ArgumentParser(description="유튜브 채널 지식 문서화 PoC")
     ap.add_argument("--config", default="config/channel.yaml")

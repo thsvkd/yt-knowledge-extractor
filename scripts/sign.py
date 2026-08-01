@@ -91,15 +91,23 @@ def sign_file(signtool: Path, target: Path, cert_args: list[str]) -> None:
     """signtool 로 파일 하나를 SHA256 + RFC3161 타임스탬프로 서명한다(실패 시 종료)."""
     timestamp_url = os.environ.get("YKE_SIGN_TIMESTAMP_URL", _DEFAULT_TIMESTAMP)
     cmd = [
-        str(signtool), "sign",
+        str(signtool),
+        "sign",
         *cert_args,
-        "/fd", "SHA256",
-        "/tr", timestamp_url,
-        "/td", "SHA256",
+        "/fd",
+        "SHA256",
+        "/tr",
+        timestamp_url,
+        "/td",
+        "SHA256",
         str(target),
     ]
     # 비밀번호(/p) 는 로그에 남기지 않는다.
-    shown = " ".join(("***" if prev == "/p" else a) for prev, a in zip([""] + cmd, cmd))
+    # 길이가 다른 것이 의도다 — 앞에 "" 를 붙여 각 인자를 '바로 앞 인자'와 짝지어 보고,
+    # 남는 마지막 하나는 버린다. strict=True 로 바꾸면 여기서 죽는다.
+    shown = " ".join(
+        ("***" if prev == "/p" else a) for prev, a in zip([""] + cmd, cmd, strict=False)
+    )
     info(f"서명: {target.name}")
     result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
     if result.returncode != 0:
@@ -117,8 +125,10 @@ def maybe_sign_bundle(dst: Path) -> bool:
     # macOS 빌드가 signtool 을 못 찾아 죽는다(실제로 걸리는 함정). macOS 서명은 범위 밖.
     # 조용히 False 를 돌려주면 "서명됐다"고 오해한 채 배포하게 되므로 이유를 반드시 남긴다.
     if sys.platform != "win32":
-        info(f"코드 서명 건너뜀 ({sys.platform} — 이 스크립트는 Windows 전용입니다. "
-             "macOS 는 미서명 배포이며 README 의 Gatekeeper 우회 안내로 대응합니다).")
+        info(
+            f"코드 서명 건너뜀 ({sys.platform} — 이 스크립트는 Windows 전용입니다. "
+            "macOS 는 미서명 배포이며 README 의 Gatekeeper 우회 안내로 대응합니다)."
+        )
         return False
     cert_args = _sign_args()
     if cert_args is None:
@@ -140,9 +150,11 @@ def _main(argv: list[str]) -> int:
     # 조용히 False 를 돌려주고 _main 이 그대로 0 을 반환해, macOS 에서 "출력 0줄 + 종료 0"
     # 이라는 성공처럼 보이는 무동작이 됐다(서명됐다고 믿고 배포하게 된다).
     if sys.platform != "win32":
-        fail(f"이 스크립트는 Windows 전용입니다(현재 {sys.platform}). "
-             "macOS 코드 서명/공증은 이번 범위 밖이며, 미서명 배포 + README 의 "
-             "Gatekeeper 우회 안내로 대응합니다.")
+        fail(
+            f"이 스크립트는 Windows 전용입니다(현재 {sys.platform}). "
+            "macOS 코드 서명/공증은 이번 범위 밖이며, 미서명 배포 + README 의 "
+            "Gatekeeper 우회 안내로 대응합니다."
+        )
     if len(argv) != 1:
         fail("사용법: python scripts/sign.py <배포폴더|exe경로>")
     target = Path(argv[0]).resolve()

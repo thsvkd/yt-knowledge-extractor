@@ -47,12 +47,17 @@ class ClaudeClient:
         cmd = [
             self._bin,
             "-p",
-            "--output-format", "json",
-            "--model", model,
-            "--system-prompt", system,
-            "--tools", "",
+            "--output-format",
+            "json",
+            "--model",
+            model,
+            "--system-prompt",
+            system,
+            "--tools",
+            "",
             "--no-session-persistence",
-            "--setting-sources", "",
+            "--setting-sources",
+            "",
         ]
         try:
             proc = subprocess.run(
@@ -75,7 +80,9 @@ class ClaudeClient:
                 data = None
 
         if proc.returncode != 0 or (data is not None and data.get("is_error")):
-            detail = (data or {}).get("result") or proc.stderr.strip() or f"종료 코드 {proc.returncode}"
+            detail = (
+                (data or {}).get("result") or proc.stderr.strip() or f"종료 코드 {proc.returncode}"
+            )
             raise RuntimeError(f"claude -p 실패: {detail}")
         if data is None:
             raise RuntimeError(f"claude -p 출력 파싱 실패: {proc.stdout[:500]!r}")

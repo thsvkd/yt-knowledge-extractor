@@ -65,9 +65,7 @@ class TestRepairSegments(unittest.TestCase):
     def test_should_stop_raises_stopped(self) -> None:
         client = _FakeClient(lambda u: u)
         with self.assertRaises(StoppedError):
-            stage_repair.repair_segments(
-                _segs(), LLMConfig(), client, should_stop=lambda: True
-            )
+            stage_repair.repair_segments(_segs(), LLMConfig(), client, should_stop=lambda: True)
 
     def test_chunking_splits_large_input(self) -> None:
         # 아주 작은 청크 크기 → 세그먼트마다 별도 LLM 호출.

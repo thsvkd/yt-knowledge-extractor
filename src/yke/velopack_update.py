@@ -29,6 +29,7 @@ Velopack(Squirrel 후속)이 설치와 자동 업데이트를 함께 담당한�
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Callable
 
@@ -132,10 +133,10 @@ def download(info, progress_cb: Callable[[float], None] | None = None) -> None:
     if progress_cb is not None:
 
         def cb(percent):  # velopack: 0~100 int
-            try:
+            # 진행률 표시가 실패해도 다운로드가 끊기면 안 된다(콜백 예외는 velopack 쪽으로
+            # 전파된다).
+            with contextlib.suppress(Exception):
                 progress_cb(max(0.0, min(1.0, float(percent) / 100.0)))
-            except Exception:  # noqa: BLE001
-                pass
 
     _manager().download_updates(info, cb)
 

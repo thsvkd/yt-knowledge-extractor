@@ -101,13 +101,17 @@ def repair_segments(
     total = len(chunks)
 
     def _call(lines: list[str]) -> str:
-        return client.complete(_SYSTEM, "다음 자막을 교정하세요:\n\n" + "\n".join(lines), model=llm_cfg.model)
+        return client.complete(
+            _SYSTEM, "다음 자막을 교정하세요:\n\n" + "\n".join(lines), model=llm_cfg.model
+        )
 
     executor = ThreadPoolExecutor(max_workers=_resolve_concurrency(llm_cfg, total))
     # 청크 순서대로 future 를 만들어, 결과도 순서대로(=진행 로그도 순서대로) 취합한다.
     futures = [executor.submit(_call, lines) for _start, lines in chunks]
     try:
-        for idx, (fut, (start, lines)) in enumerate(zip(futures, chunks), 1):
+        # futures 는 chunks 로부터 만들어져 길이가 같다. strict=True 로 그 불변식을 못박아,
+        # 나중에 한쪽만 필터링하는 변경이 들어오면 조용히 잘리지 않고 즉시 드러나게 한다.
+        for idx, (fut, (start, lines)) in enumerate(zip(futures, chunks, strict=True), 1):
             if should_stop():
                 # 남은(아직 시작 안 한) 호출은 취소하고, 진행 중인 것은 버린 채 즉시 멈춘다.
                 executor.shutdown(wait=False, cancel_futures=True)
@@ -119,7 +123,9 @@ def repair_segments(
                 continue
             if len(parsed) != len(lines):
                 # 줄 수가 어긋나면 세그먼트 정렬이 밀려 내용이 뒤섞일 수 있다 → 통째로 원본 유지.
-                log(f"    보정 청크 {idx}/{total} 줄 수 불일치({len(parsed)}≠{len(lines)}) → 원본 유지")
+                log(
+                    f"    보정 청크 {idx}/{total} 줄 수 불일치({len(parsed)}≠{len(lines)}) → 원본 유지"
+                )
                 continue
             changed = 0
             for offset, new_text in enumerate(parsed):

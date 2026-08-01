@@ -115,11 +115,15 @@ class TestAliasTargets(unittest.TestCase):
 
 class TestProviderReady(unittest.TestCase):
     def test_gemini_needs_sdk_and_key(self) -> None:
-        with mock.patch("yke.gui._genai_available", return_value=True), \
-             mock.patch("yke.gui.has_gemini_api_key", return_value=True):
+        with (
+            mock.patch("yke.gui._genai_available", return_value=True),
+            mock.patch("yke.gui.has_gemini_api_key", return_value=True),
+        ):
             self.assertTrue(PipelineGUI._provider_ready("gemini"))
-        with mock.patch("yke.gui._genai_available", return_value=True), \
-             mock.patch("yke.gui.has_gemini_api_key", return_value=False):
+        with (
+            mock.patch("yke.gui._genai_available", return_value=True),
+            mock.patch("yke.gui.has_gemini_api_key", return_value=False),
+        ):
             self.assertFalse(PipelineGUI._provider_ready("gemini"))
 
     def test_claude_uses_cli(self) -> None:

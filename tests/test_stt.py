@@ -122,7 +122,9 @@ class TestTranscribeBatchedGate(unittest.TestCase):
         # progress 콜백이 자주 나온다는 요구를 폴백 경로에서도 지킨다.
         cfg = self._cfg(model="medium", device="cuda", batch_size=16)
         with (
-            mock.patch.object(stage3_stt, "_get_model", side_effect=[RuntimeError("gpu fail"), object()]),
+            mock.patch.object(
+                stage3_stt, "_get_model", side_effect=[RuntimeError("gpu fail"), object()]
+            ),
             mock.patch.object(stage3_stt, "_run", return_value=[]) as run,
         ):
             stage3_stt.transcribe(Path("audio.webm"), "ko", cfg)
@@ -246,9 +248,9 @@ class TestTranscribeStoppedError(unittest.TestCase):
             mock.patch.object(
                 stage3_stt, "_run", side_effect=stage3_stt.StoppedError("stop")
             ) as run,
+            self.assertRaises(stage3_stt.StoppedError),
         ):
-            with self.assertRaises(stage3_stt.StoppedError):
-                stage3_stt.transcribe(Path("audio.webm"), "ko", self._cfg())
+            stage3_stt.transcribe(Path("audio.webm"), "ko", self._cfg())
         run.assert_called_once()  # CPU 폴백으로 재시도하지 않는다
 
 

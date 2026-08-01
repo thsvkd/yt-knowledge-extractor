@@ -44,7 +44,9 @@ def _source_link(s, meta_by_id: dict) -> str:
     meta = meta_by_id.get(s.video_id) or {}
     title = (meta.get("title") or s.video_id)[:20]
     title = title.replace("[", "(").replace("]", ")")
-    return f"[{title} @ {s.timestamp}](https://youtu.be/{s.video_id}?t={ts_to_seconds(s.timestamp)})"
+    return (
+        f"[{title} @ {s.timestamp}](https://youtu.be/{s.video_id}?t={ts_to_seconds(s.timestamp)})"
+    )
 
 
 def integrate(all_units: list[KnowledgeUnit], llm_cfg, client) -> list[ConceptCluster]:
