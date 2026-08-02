@@ -48,7 +48,12 @@ from pathlib import Path
 import flet_template
 import platform_spec
 from _common import REPO_ROOT, check, fail, info, require_uv, sync_version
-from sign import find_signtool, maybe_sign_bundle, velopack_sign_params
+from sign import (
+    find_signtool,
+    maybe_sign_bundle,
+    velopack_sign_args_macos,
+    velopack_sign_params,
+)
 
 # flet build 메타데이터. 제품명·packId·레포 URL 등 "빌드와 업로드가 반드시 같은 값을
 # 써야 하는" 것들은 scripts/platform_spec.py 가 단일 소스다(여기서 다시 정의하면
@@ -599,18 +604,19 @@ def velopack_pack(pack_dir: Path, version: str, spec: platform_spec.PlatformSpec
     ]
     if sign_params:
         cmd += ["--signParams", sign_params]
-        info("Velopack 패키징(서명 포함)…")
+        info("Velopack 패키징(Windows 서명 포함)…")
     elif spec.target == "macos":
-        # Apple Silicon 탈출구(기본 꺼짐). Velopack 이 .app 안에 UpdateMac 과 sq.version
-        # 심링크를 넣어 번들 seal 이 깨지면 첫 실행이 '손상되었습니다' 로 죽을 수 있다.
-        # 그때만 켠다(codesign -s - 로 ad-hoc 재서명되지만 --options runtime 이 함께 붙는
-        # 부작용은 미검증). --signAppIdentity 를 생략하면 Velopack 은 codesign 을 아예
-        # 돌리지 않아 재봉인도 하지 않는다.
-        if os.environ.get("YKE_MACOS_ADHOC_SIGN") == "1":
-            cmd += ["--signAppIdentity", "-"]
-            info("Velopack 패키징(macOS ad-hoc 재서명 — YKE_MACOS_ADHOC_SIGN=1)…")
+        # **항상** 넘긴다(기본은 ad-hoc). vpk 는 pack 중에 UpdateMac 과 sq.version 을
+        # Contents/MacOS 에 끼워 넣으므로, 위에서 prune 직후 재서명해 두어도 그 시점에 앱
+        # 봉인이 다시 깨진다. --signAppIdentity 를 생략하면 Velopack 은 codesign 을 아예
+        # 돌리지 않아 그 깨진 봉인이 그대로 설치기에 들어간다(sign.velopack_sign_args_macos).
+        macos_args = velopack_sign_args_macos()
+        cmd += macos_args
+        identity = macos_args[macos_args.index("--signAppIdentity") + 1]
+        if identity == "-":
+            info("Velopack 패키징(macOS ad-hoc 재봉인 — Developer ID 미설정, 공증 없음)…")
         else:
-            info("Velopack 패키징(미서명 — macOS 는 이번 범위에서 코드 서명/공증 제외)…")
+            info(f"Velopack 패키징(macOS 서명: {identity})…")
     else:
         info("Velopack 패키징(미서명 — YKE_SIGN_THUMBPRINT/PFX 미설정)…")
     check(cmd, env=env)

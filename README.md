@@ -499,15 +499,24 @@ python scripts/build.py
 - 정식 `.pfx` 인증서가 있으면 지문 대신 `YKE_SIGN_PFX`(+`YKE_SIGN_PFX_PASSWORD`)로 지정합니다.
 - 이미 빌드된 폴더를 재서명하려면: `python scripts/sign.py dist/yke-base-windows`
 
-**macOS 코드 서명·공증은 현재 범위 밖입니다.**
+**macOS 는 ad-hoc 재봉인만 하고, Developer ID 서명·공증은 선택입니다.**
 
-- macOS 빌드는 **미서명·미공증**으로 배포합니다(Apple Developer Program 유료 멤버십이 필요해
-  이번 범위에서 제외했습니다). 그 결과 사용자는 최초 설치 시 위
+- 기본은 **ad-hoc 재봉인**입니다(`vpk pack --signAppIdentity -`). 이건 신원 증명이 아니라
+  **봉인 복구**입니다 — 빌드 과정에서 번들 밖을 가리키는 심볼릭 링크를 걷어내고, vpk 가
+  `UpdateMac`·`sq.version` 을 번들에 끼워 넣으면서 프레임워크의 코드 봉인
+  (`_CodeSignature/CodeResources`)이 깨지기 때문입니다. 재봉인하지 않으면 설치본이
+  `a sealed resource is missing or invalid` 상태로 나갑니다.
+- 그래도 **공증(notarization)은 되지 않으므로** 사용자는 최초 설치 시 위
   [Gatekeeper 우회 절차](#macos)를 한 번 거쳐야 합니다 — README·릴리스 노트에서 이 안내를
   빼면 "설치가 아예 안 된다"는 문의로 돌아옵니다.
-- 향후 Apple Developer ID 인증서를 도입하면 별도 스크립트 없이 Velopack 패키징 단계에
-  `vpk pack --signAppIdentity <Developer ID Application: …> --notaryProfile <프로필>` 을 붙여
-  서명·공증을 함께 처리합니다.
+- Apple Developer ID 인증서가 있으면 아래 환경 변수만 채우면 됩니다(별도 스크립트 불필요).
+  각각 독립이라 있는 것만 지정해도 동작합니다.
+
+  | 환경 변수 | 대응하는 `vpk pack` 인자 | 용도 |
+  |---|---|---|
+  | `YKE_SIGN_APP_IDENTITY` | `--signAppIdentity` | `.app` 서명(`Developer ID Application: …`) |
+  | `YKE_SIGN_INSTALL_IDENTITY` | `--signInstallIdentity` | `.pkg` 설치기 서명(`Developer ID Installer: …`) |
+  | `YKE_SIGN_NOTARY_PROFILE` | `--notaryProfile` | notarytool 키체인 프로파일(공증) |
 
 **테스트**
 

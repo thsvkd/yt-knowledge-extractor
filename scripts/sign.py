@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""배포 번들 코드 서명(Windows Authenticode).
+"""배포 번들 코드 서명(Windows Authenticode + macOS codesign 인자 조립).
 
 self-signed 인증서로도, 정식 CA 인증서로도 동작한다. 서명 자체는 인증서 종류와 무관하게
 붙지만, **신뢰**는 다르다:
@@ -16,9 +16,17 @@ self-signed 인증서로도, 정식 CA 인증서로도 동작한다. 서명 자�
   YKE_SIGN_PFX_PASSWORD  .pfx 비밀번호(있으면).
   YKE_SIGN_TIMESTAMP_URL RFC3161 타임스탬프 서버(기본 digicert). 인증서 만료 후에도 서명 유지.
 
-이 모듈은 **Windows 전용**이다. macOS 코드 서명/공증(codesign/notarytool)은 이번 범위
-밖이라 macOS 빌드는 미서명으로 배포하고, 사용자에게는 README 의 Gatekeeper 우회 안내로
-대응한다. 그래서 아래 진입점들은 Windows 가 아니면 아무것도 하지 않는다.
+**signtool 경로는 Windows 전용**이다(:func:`maybe_sign_bundle`, :func:`sign_file`).
+macOS 는 signtool 을 쓰지 않고 vpk 가 pack 단계에서 codesign 을 부르므로, 이 모듈은 그
+**인자만** 만들어 준다(:func:`velopack_sign_args_macos`). 두 OS 의 서명 지정 방식이 달라서
+그렇다 — Windows 는 signtool 인자 **문자열 하나**(``--signParams``)를, macOS 는
+``--signAppIdentity``/``--signInstallIdentity``/``--notaryProfile`` 같은 **개별 인자**를 받는다.
+
+macOS 서명 환경 변수(전부 선택. 미설정이면 ad-hoc 재서명만 하고 공증은 하지 않는다):
+  YKE_SIGN_APP_IDENTITY      .app 서명 신원("Developer ID Application: …"). 미설정 시 ``-``
+                             (ad-hoc)이 기본으로 들어간다 — 아래 velopack_sign_args_macos 참고.
+  YKE_SIGN_INSTALL_IDENTITY  .pkg 설치기 서명 신원("Developer ID Installer: …").
+  YKE_SIGN_NOTARY_PROFILE    notarytool 키체인 프로파일 이름(공증까지 할 때).
 
 사용:
   python scripts/sign.py <배포폴더|exe경로>   # 직접 서명(build.py 없이 재서명할 때)
@@ -39,6 +47,55 @@ from _common import REPO_ROOT, fail, info
 # 애초에 macOS 서명은 이번 범위 밖이다(모듈 docstring 참고).
 _APP_EXE = "yt-knowledge-extractor.exe"
 _DEFAULT_TIMESTAMP = "http://timestamp.digicert.com"
+
+
+def _env(name: str) -> str:
+    """환경 변수 값(앞뒤 공백 제거). 미설정이면 빈 문자열."""
+    return os.environ.get(name, "").strip()
+
+
+def mask_sign_params(params: str) -> str:
+    """서명 인자 문자열에서 .pfx 비밀번호(``/p <값>``)만 가린다.
+
+    나머지 인자(인증서 경로·타임스탬프 URL)는 실패 원인을 짚는 데 필요하므로 그대로 둔다.
+    로그·오류 메시지에 이 문자열을 넣기 전에 반드시 통과시킨다.
+    """
+    masked: list[str] = []
+    hide_next = False
+    for token in params.split(" "):
+        if hide_next:
+            masked.append("***")
+            hide_next = False
+            continue
+        masked.append(token)
+        hide_next = token == "/p"
+    return " ".join(masked)
+
+
+def velopack_sign_args_macos() -> list[str]:
+    """macOS ``vpk pack`` 에 넘길 서명 인자. 설정된 항목만 담아 돌려준다.
+
+    세 항목은 서로 독립이다 — ad-hoc 재서명처럼 앱 신원만 주는 경우도 그대로 성립해야 하므로
+    있는 것만 넣는다.
+
+    ``--signAppIdentity`` 를 **비워 두면 안 된다**. 생략하면 Velopack 은 codesign 을 아예
+    돌리지 않는데, vpk 는 pack 중에 ``UpdateMac`` 과 ``sq.version`` 을 ``Contents/MacOS`` 에
+    끼워 넣으므로 우리가 pack 전에 재서명해 두어도(build.resign_adhoc) **그 시점에 앱 봉인이
+    다시 깨진다**. 그래서 기본값을 ``-``(ad-hoc)으로 두어 vpk 자신이 마지막에 다시 봉인하게
+    한다. 이건 Developer ID 서명이 아니라 재봉인이므로 공증되지 않는다는 사실은 그대로다.
+    """
+    args: list[str] = []
+    for flag, name in (
+        ("--signAppIdentity", "YKE_SIGN_APP_IDENTITY"),
+        ("--signInstallIdentity", "YKE_SIGN_INSTALL_IDENTITY"),
+        ("--notaryProfile", "YKE_SIGN_NOTARY_PROFILE"),
+    ):
+        value = _env(name)
+        if value:
+            args += [flag, value]
+    if "--signAppIdentity" not in args:
+        args = ["--signAppIdentity", "-", *args]
+    return args
 
 
 def find_signtool() -> Path | None:
@@ -103,11 +160,7 @@ def sign_file(signtool: Path, target: Path, cert_args: list[str]) -> None:
         str(target),
     ]
     # 비밀번호(/p) 는 로그에 남기지 않는다.
-    # 길이가 다른 것이 의도다 — 앞에 "" 를 붙여 각 인자를 '바로 앞 인자'와 짝지어 보고,
-    # 남는 마지막 하나는 버린다. strict=True 로 바꾸면 여기서 죽는다.
-    shown = " ".join(
-        ("***" if prev == "/p" else a) for prev, a in zip([""] + cmd, cmd, strict=False)
-    )
+    shown = mask_sign_params(" ".join(cmd))
     info(f"서명: {target.name}")
     result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
     if result.returncode != 0:
