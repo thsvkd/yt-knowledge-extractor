@@ -187,5 +187,36 @@ class PruneExternalSymlinksTest(unittest.TestCase):
         self.assertTrue((self.bundle / "Contents" / "MacOS" / "app").is_file())
 
 
+class ResignAdhocTest(unittest.TestCase):
+    """링크를 지운 번들을 ad-hoc 으로 다시 봉인하는지.
+
+    지운 ``.pod`` 는 프레임워크의 ``_CodeSignature/CodeResources`` 에 봉인된 리소스로
+    등재돼 있어서, 파일만 지우면 번들이 ``a sealed resource is missing or invalid`` 가
+    된다(실측: v0.1.5 를 만든 빌드가 그 상태였다). 개발 머신에서는 quarantine 이 없어
+    그냥 실행되므로 **로컬 실행만으로는 드러나지 않는다** — 그래서 테스트로 고정한다.
+
+    실제 서명 여부는 여기서 검증할 수 없다(codesign 은 macOS 전용이고 CI 는 다른 OS 에서도
+    돈다). 검증 대상은 "커맨드가 맞는가"와 "부르는 조건이 맞는가" 두 가지다.
+    """
+
+    def test_command_is_force_deep_adhoc(self) -> None:
+        calls: list[list[str]] = []
+        build.resign_adhoc(Path("/tmp/app.app"), runner=calls.append)
+        self.assertEqual(calls, [["codesign", "--force", "--deep", "--sign", "-", "/tmp/app.app"]])
+
+    def test_failure_is_not_swallowed(self) -> None:
+        """재서명 실패를 삼키면 깨진 봉인이 그대로 배포된다.
+
+        기본 runner 는 ``_common.check`` 라 종료 코드가 0 이 아니면 SystemExit 로 죽는다.
+        여기서는 그 계약(예외가 호출자에게 전파된다)만 고정한다.
+        """
+
+        def boom(_cmd: list[str]) -> None:
+            raise SystemExit(1)
+
+        with self.assertRaises(SystemExit):
+            build.resign_adhoc(Path("/tmp/app.app"), runner=boom)
+
+
 if __name__ == "__main__":
     unittest.main()

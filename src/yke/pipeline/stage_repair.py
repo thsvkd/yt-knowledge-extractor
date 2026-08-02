@@ -124,7 +124,8 @@ def repair_segments(
             if len(parsed) != len(lines):
                 # 줄 수가 어긋나면 세그먼트 정렬이 밀려 내용이 뒤섞일 수 있다 → 통째로 원본 유지.
                 log(
-                    f"    보정 청크 {idx}/{total} 줄 수 불일치({len(parsed)}≠{len(lines)}) → 원본 유지"
+                    f"    보정 청크 {idx}/{total} 줄 수 불일치"
+                    f"({len(parsed)}≠{len(lines)}) → 원본 유지"
                 )
                 continue
             changed = 0

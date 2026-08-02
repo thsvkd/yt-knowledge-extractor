@@ -298,7 +298,8 @@ def transcribe(
         # CPU 폴백을 무산시키지 않도록 보호한다. 메시지도 cp949 안전 문자만 쓴다(이모지 금지).
         with contextlib.suppress(Exception):
             log(
-                f"  주의: GPU STT 실패 → CPU 로 폴백합니다. 큰 모델은 CPU 에서 매우 느릴 수 있습니다 "
+                "  주의: GPU STT 실패 → CPU 로 폴백합니다. "
+                f"큰 모델은 CPU 에서 매우 느릴 수 있습니다 "
                 f"({type(exc).__name__}: {exc})"
             )
         _model_cache.pop((model_name, device, compute_type, cpu_threads), None)

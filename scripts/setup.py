@@ -25,8 +25,10 @@ CPU / GPU 차이:
 from __future__ import annotations
 
 import argparse
+import shutil
 import stat
 import subprocess
+from pathlib import Path
 
 from _common import REPO_ROOT, check, info, require_uv, sync_version
 
@@ -89,6 +91,25 @@ def install_pre_commit_hook() -> None:
     info(f"pre-commit 훅 설치: {hook}")
 
 
+def check_release_tooling() -> None:
+    """릴리스 빌드에 필요한 도구를 확인한다(없어도 개발은 되므로 **안내만** 한다).
+
+    ``vpk`` 는 설치기·업데이트 패키지를 만드는 Velopack CLI다. 개발·테스트에는 필요 없고
+    ``scripts/build.py`` 의 마지막 단계에서만 쓰므로 여기서 막지 않는다 — 막으면 앱을
+    고치기만 할 사람에게 릴리스 도구를 강요하게 된다.
+
+    그래도 알려는 준다. 안 그러면 빌드를 수 분 돌린 뒤 마지막 패키징에서야 없다는 걸 안다.
+
+    PATH 뿐 아니라 dotnet 글로벌 툴 기본 위치도 본다 — ``dotnet tool install -g`` 로 깔면
+    그쪽에 들어가는데 셸을 다시 열기 전까지 PATH 에 안 잡히는 경우가 흔하다.
+    """
+    if shutil.which("vpk") is None and not (Path.home() / ".dotnet" / "tools" / "vpk").exists():
+        info(
+            "참고: Velopack CLI(vpk)가 없습니다. 릴리스 빌드를 하려면 설치하세요 — "
+            "dotnet tool install -g vpk"
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -103,6 +124,7 @@ def main() -> int:
     sync_version()  # pyproject.toml(SSOT) 버전을 src/yke/__init__.py 에 반영.
     verify_import()
     install_pre_commit_hook()
+    check_release_tooling()
 
     info("환경 구성 완료. `python scripts/run.py` 로 앱을 실행하세요.")
     return 0

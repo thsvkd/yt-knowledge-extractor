@@ -200,7 +200,8 @@ def _model_files(model_dir: Path) -> tuple[str, str, str]:
     missing = [f.name for f in files if not f.exists()]
     if missing:
         raise RuntimeError(
-            f"sherpa-onnx 모델 구성이 예상과 다릅니다({model_dir.name}): {', '.join(missing)} 없음. "
+            f"sherpa-onnx 모델 구성이 예상과 다릅니다({model_dir.name}): "
+            f"{', '.join(missing)} 없음. "
             f"캐시를 지우고 다시 시도하세요: {model_dir}"
         )
     return tuple(str(f) for f in files)  # type: ignore[return-value]

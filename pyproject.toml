@@ -92,13 +92,10 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
+# naver-post-crawler 와 같은 설정을 쓴다(두 저장소의 스크립트를 서로 이식하므로 규칙이
+# 갈리면 옮길 때마다 린트가 터진다). 아래 예외 두 개만 이 저장소 사정이다.
 select = ["E", "F", "I", "UP", "B", "SIM"]
 ignore = [
-    # 줄 길이는 `ruff format` 이 책임진다(코드는 이미 100칸으로 정렬된다). E501 에 남는 것은
-    # 포맷터가 쪼갤 수 없는 문자열·주석뿐인데, ruff 는 길이를 **표시 너비**로 세고 한글은
-    # 2칸이라 이 규칙이 한국어 주석에는 사실상 "한글 50자" 제한이 된다. 이 저장소는 주석으로
-    # "왜"를 길게 설명하는 것이 규약이라 그 제한이 규약과 정면으로 부딪힌다.
-    "E501",
     # ProgramFiles(x86) · OneDrive · OneDriveConsumer 는 Windows 가 실제로 쓰는 이름이다.
     # 대문자로 바꿔도 동작은 같지만(파이썬이 Windows 에서 키를 대문자로 정규화한다),
     # 원본 표기를 유지하는 편이 무엇을 읽는지 분명하다.
@@ -109,6 +106,15 @@ ignore = [
 # 테스트의 중첩 with 는 바깥이 mock, 안쪽이 assertRaises 인 형태가 대부분이다. 하나로 합치면
 # assertRaises 의 적용 범위가 넓어져 "무엇이 예외를 던져야 하는지"가 흐려진다.
 "tests/*" = ["SIM117"]
+
+# E501 은 켜 둔다. ruff 는 줄 길이를 **표시 너비**로 세고 한글이 2칸이라 한국어 주석에는
+# 사실상 "한글 50자" 제한이 되지만, 실제로 걸린 24곳은 전부 나눠 쓸 수 있었다.
+# 아래 두 파일만 예외다 — **바깥에서 온 원문을 글자 그대로 담고 있어** 줄을 다시 나누는
+# 것이 곧 내용 변경이다.
+#   stage5_extract.py: LLM 시스템 프롬프트(문장을 쪼개면 모델에 가는 텍스트가 달라진다)
+#   test_flet_template.py: flet 빌드 템플릿 xib 의 발췌(실제 입력과 같아야 검증이 성립한다)
+"src/yke/pipeline/stage5_extract.py" = ["E501"]
+"tests/test_flet_template.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

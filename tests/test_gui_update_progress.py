@@ -91,7 +91,10 @@ class TestVelopackCheckpoints(unittest.TestCase):
         self.assertGreaterEqual(g._update_shown, 35.0)
 
     def test_checkpoint_does_not_move_backwards(self) -> None:
-        """velopack 은 델타 1개일 때 (0/1)*70 = 0 을 보낸다 — 이미 오른 표시값을 되돌리면 안 된다."""
+        """velopack 은 델타 1개일 때 (0/1)*70 = 0 을 보낸다.
+
+        이미 올라간 표시값을 그 0 으로 되돌리면 안 된다.
+        """
         g = _gui()
         _tick(g, 100)
         before = g._update_shown

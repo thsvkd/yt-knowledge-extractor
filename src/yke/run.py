@@ -623,7 +623,8 @@ def build_transcript(
 
     if not segs:
         raise RuntimeError(
-            f"[{vid}] 트랜스크립트를 확보하지 못했습니다 (STT·수동·자동 자막 모두 실패하거나 불완전)."
+            f"[{vid}] 트랜스크립트를 확보하지 못했습니다 "
+            "(STT·수동·자동 자막 모두 실패하거나 불완전)."
         )
 
     _substep("clean", f"[{vid}] 텍스트 정제 중…")

@@ -6,7 +6,7 @@
 
 사용:
     python scripts/build.py                 # Velopack 설치기(dist/velopack/)만 빌드
-    python scripts/build.py --gpu-runtime   # 설치기 빌드 + cuBLAS 온디맨드 에셋 zip(dist/yke-gpu-runtime.zip)
+    python scripts/build.py --gpu-runtime   # 설치기 + cuBLAS 온디맨드 에셋 zip 까지
 
 결과물(기본):
     dist/yke-base-<platform>/  # flet 번들 폴더(설치기의 원본). macOS 는 이 안의 *.app 이 원본.
@@ -101,7 +101,8 @@ setlocal
 set "APP_DIR=%~dp0"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%APP_DIR%prepare_storage.ps1" >nul 2>&1
 if errorlevel 1 (
-    echo [경고] 문서 폴더 준비에 실패했습니다. 앱이 PathNotFoundException 으로 뜨지 않을 수 있습니다.
+    echo [경고] 문서 폴더 준비에 실패했습니다.
+    echo 앱이 PathNotFoundException 으로 뜨지 않을 수 있습니다.
     echo Windows 보안 -^> 바이러스 및 위협 방지 -^> 랜섬웨어 방지 관리 에서 "제어된 폴더 액세스"가
     echo 켜져 있다면 이 앱을 허용 목록에 추가하거나 꺼 보세요. ^(README 의 자주 묻는 질문 참고^)
 )
@@ -185,7 +186,8 @@ def ensure_windows_toolchain() -> None:
         "Visual Studio C++ 빌드 도구('Desktop development with C++')가 필요합니다.\n"
         "  https://visualstudio.microsoft.com/downloads/ 에서 Build Tools 를 설치하거나\n"
         "  winget install --id Microsoft.VisualStudio.2022.BuildTools \\\n"
-        '    --override "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --includeRecommended --passive"'
+        f'    --override "--add {_VC_TOOLS_COMPONENT}'
+        ' --includeRecommended --passive"'
     )
 
 
@@ -396,7 +398,8 @@ def verify_artifact(dst: Path, target: str) -> None:
             )
         if not os.access(exe, os.X_OK):
             fail(
-                f"{exe} 에 실행 권한이 없습니다(번들이 깨졌거나 압축/복사 과정에서 권한이 날아갔습니다)."
+                f"{exe} 에 실행 권한이 없습니다"
+                "(번들이 깨졌거나 압축/복사 과정에서 권한이 날아갔습니다)."
             )
         info(f"완료(앱 번들): {app}")
     else:
@@ -450,6 +453,32 @@ def prune_external_symlinks(bundle: Path) -> list[Path]:
             path.unlink()
             removed.append(path)
     return removed
+
+
+def resign_adhoc(bundle: Path, *, runner=check) -> None:
+    """번들 전체를 ad-hoc 으로 다시 서명한다(:func:`prune_external_symlinks` 직후에 부른다).
+
+    지운 ``.pod`` 는 프레임워크의 ``_CodeSignature/CodeResources`` 에 **봉인된 리소스로
+    등재돼 있다** — 심볼릭 링크는 대상 경로까지 그 목록에 기록된다. 그래서 파일만 지우면
+    번들이 ``a sealed resource is missing or invalid`` 상태가 된다.
+
+    실측 확인(v0.1.5 를 만든 것과 같은 빌드)::
+
+        $ codesign --verify --deep --strict …/yt-knowledge-extractor.app
+        …: a sealed resource is missing or invalid
+        In subcomponent: …/Contents/Frameworks/serious_python_darwin.framework
+
+        $ codesign --force --deep --sign - <사본>      # 이 함수가 하는 일
+        $ codesign --verify --deep --strict <사본>     # 출력 없음 = 통과
+
+    Apple Silicon 은 실행되는 모든 Mach-O 에 최소 ad-hoc 서명을 요구하므로 깨진 봉인을
+    그대로 배포하면 안 된다. 개발 머신에서는 quarantine 속성이 없어 그냥 실행되기 때문에
+    이 상태가 로컬 실행만으로는 드러나지 않는다 — 설치기로 받은 사용자 쪽에서만 터진다.
+
+    Developer ID 서명이 아니라 **재봉인**이다. 공증되지 않는다는 사실은 그대로다.
+    """
+    info("번들 ad-hoc 재서명(제거한 링크 때문에 깨진 봉인 복구)…")
+    runner(["codesign", "--force", "--deep", "--sign", "-", str(bundle)])
 
 
 def macos_app_bundle(dst: Path) -> Path:
@@ -681,7 +710,8 @@ def main() -> int:
     build_env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
 
     if target == "windows":
-        # 번들에 x64 VC 런타임이 들어가도록 WINDIR 만 shim 으로 바꾼다(이유: prepare_vcruntime_shim).
+        # 번들에 x64 VC 런타임이 들어가도록 WINDIR 만 shim 으로 바꾼다
+        # (이유: prepare_vcruntime_shim).
         shim = prepare_vcruntime_shim()
         reset_cmake_cache_if_stale(shim)
         build_env["WINDIR"] = str(shim)
@@ -738,8 +768,13 @@ def main() -> int:
         if target == "macos":
             # 번들 밖(빌드 머신의 pub 캐시)을 가리키는 링크를 먼저 걷어낸다. 두면 vpk 가
             # 순환 링크를 따라가다 PathTooLongException 으로 죽는다(prune_external_symlinks 참고).
-            for link in prune_external_symlinks(pack_dir):
+            pruned = prune_external_symlinks(pack_dir)
+            for link in pruned:
                 info(f"번들 밖을 가리키는 링크 제거: {link.relative_to(pack_dir)}")
+            # 링크를 지운 **그때만** 재서명한다. 지운 게 없으면 봉인은 멀쩡하고, 불필요한
+            # 재서명은 CDHash 를 바꿔 키체인이 저장된 자격증명을 다시 묻게 만든다.
+            if pruned:
+                resign_adhoc(pack_dir)
         out = velopack_pack(pack_dir, version, spec)
         verify_velopack_output(out, spec, version)
         sep = "\\" if target == "windows" else "/"

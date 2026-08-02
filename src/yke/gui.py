@@ -427,7 +427,8 @@ class PipelineGUI:
             width=190,
             tooltip=(
                 "AI 모델: faster-whisper(정확도 높음, 기본). "
-                "경량 모델: sherpa-onnx(완전 오프라인·초경량, 정확도는 낮음 — 아래 모델/GPU 설정은 무시됨)"
+                "경량 모델: sherpa-onnx(완전 오프라인·초경량, 정확도는 낮음 — "
+                "아래 모델/GPU 설정은 무시됨)"
             ),
             options=[ft.dropdown.Option(key=v, text=label) for label, v in _STT_ENGINES],
         )
@@ -540,7 +541,8 @@ class PipelineGUI:
         # 백그라운드에서 채운다 — 그때까지 보일 문구를 초기값으로 둔다.
         self.cred_status = ft.Text("자격증명 확인 중…", size=12, color=_muted_color)
 
-        # 자체 업데이트: 확인 버튼 + 상태. 새 버전이 있으면 같은 버튼이 '업데이트 후 재시작'으로 바뀐다.
+        # 자체 업데이트: 확인 버튼 + 상태. 새 버전이 있으면 같은 버튼이
+        # '업데이트 후 재시작'으로 바뀐다.
         self.update_btn = ft.Button(
             "업데이트 확인", icon=ft.Icons.REFRESH, on_click=lambda _e: self._on_update_click()
         )
@@ -940,7 +942,8 @@ class PipelineGUI:
         else:
             publish(
                 "Claude CLI 를 찾을 수 없습니다 — '전체 (지식 문서화까지)' 단계나 자막 "
-                "보정에는 claude.com/claude-code 설치 + `claude login`, 또는 Gemini 사용이 필요합니다.",
+                "보정에는 claude.com/claude-code 설치 + `claude login`, "
+                "또는 Gemini 사용이 필요합니다.",
                 self._muted_color,
             )
 
@@ -1351,7 +1354,8 @@ class PipelineGUI:
             else:
                 msg = (
                     "'전체 (지식 문서화까지)' 단계에는 Claude Code CLI 가 필요합니다. "
-                    "claude.com/claude-code 설치 후 `claude login`, 또는 제공자를 Gemini 로 바꾸세요."
+                    "claude.com/claude-code 설치 후 `claude login`, "
+                    "또는 제공자를 Gemini 로 바꾸세요."
                 )
             self._set_status_now(msg, ft.Colors.RED)
             return

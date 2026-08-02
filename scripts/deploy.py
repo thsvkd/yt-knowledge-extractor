@@ -451,8 +451,10 @@ def plan_release(
                 error=(
                     f"{tag} 태그의 커밋({tag_commit[:12]})과 지금 HEAD({head_commit[:12]})가 "
                     "다릅니다 — 이대로 올리면 그 버전이 아닌 코드가 그 버전으로 배포됩니다.\n"
-                    "  * 버전을 올리는 걸 잊었다면: pyproject.toml 의 [project].version 을 올리세요.\n"
-                    f"  * 두 번째 OS 라면: 첫 번째 OS 와 같은 커밋에서 실행하세요(git checkout {tag}).\n"
+                    "  * 버전을 올리는 걸 잊었다면: pyproject.toml 의 [project].version 을\n"
+                    "    올리세요.\n"
+                    "  * 두 번째 OS 라면: 첫 번째 OS 와 같은 커밋에서 실행하세요\n"
+                    f"    (git checkout {tag}).\n"
                     "  (의도한 것이면 --force)"
                 ),
             )
@@ -586,7 +588,8 @@ def main() -> int:
         # 두 번째 플랫폼 실행. 커밋 로그는 계산조차 하지 않는다 — 같은 태그 이후 커밋은
         # 0개라 "릴리스할 변경사항이 없습니다" 로 무조건 죽는다.
         info(
-            f"{tag} 릴리스가 이미 있습니다 → 릴리스 노트는 그대로 두고 {spec.channel} 에셋만 추가합니다."
+            f"{tag} 릴리스가 이미 있습니다 → 릴리스 노트는 그대로 두고 "
+            f"{spec.channel} 에셋만 추가합니다."
         )
 
     out_dir = platform_spec.VELOPACK_OUT
